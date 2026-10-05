@@ -49,7 +49,9 @@ from lib.classes.argos_translator import ArgosTranslator
 from lib.classes.tts_manager import TTSManager
 from lib.classes.tts_engines.common.audio import get_audiolist_duration, get_audio_duration
 from lib.classes.tts_engines.common.utils import build_vtt_file
-from lib.classes.book_chapters import chapter_documents, chapter_groups
+from lib.classes.book_chapters import (
+    chapter_documents, chapter_groups, chapter_catalog, select_chapter, EXCLUDED_EPUB_TYPES,
+)
 
 from lib import *
 
@@ -1353,6 +1355,9 @@ INTO A NEW TRAINING MODEL. YOU CAN IMPROVE IT OR ASK TO A TRAINING MODEL EXPERT.
                 return []
             split_by_chapter = session.get('output_split') and session.get('output_split_hours') == 'chapters'
             chapter_docs = list(chapter_documents(epubBook)) if split_by_chapter else [(doc, None) for doc in all_docs]
+            if session.get('chapter_selection'):
+                selected = select_chapter(chapter_catalog(chapter_docs), session['chapter_selection'])
+                chapter_docs = [(doc, chapter) for doc, chapter in chapter_docs if chapter['key'] == selected['key']]
             title = get_ebook_title(epubBook, all_docs)
             blocks = []
             chapter_labels = []
@@ -1539,12 +1544,7 @@ def filter_blocks(session_id:str, idx:int, doc:EpubHtml, stanza_nlp:Pipeline, is
                 section_tag = soup.find('section')
                 if section_tag:
                     epub_type = section_tag.get('epub:type', '').lower()
-            excluded = {
-                'frontmatter', 'backmatter', 'toc', 'titlepage', 'colophon',
-                'acknowledgments', 'dedication', 'glossary', 'index',
-                'appendix', 'bibliography', 'copyright-page', 'landmark'
-            }
-            if any(part in epub_type for part in excluded):
+            if any(part in epub_type for part in EXCLUDED_EPUB_TYPES):
                 msg = 'No body part. Skip to next doc…'
                 print(msg)
                 return ''
@@ -3375,7 +3375,9 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
                 _generate_ffmpeg_metadata(part_chapters, str(metadata_file), default_audio_proc_format)
                 if book_chapter_parts is not None:
                     chapter_title = get_sanitized(book_chapter_parts[part_idx]['title'])[:80] or 'Chapter'
-                    output_name = f"{Path(session['final_name']).stem}_chapter{part_idx+1:0{pad_width}d}_{chapter_title}.{session['output_format']}"
+                    selection = session.get('chapter_selection')
+                    chapter_number = selection['number'] if selection else part_idx + 1
+                    output_name = f"{Path(session['final_name']).stem}_chapter{chapter_number:0{pad_width}d}_{chapter_title}.{session['output_format']}"
                 else:
                     output_name = (f"{Path(session['final_name']).stem}_part{part_idx+1:0{pad_width}d}.{session['output_format']}"
                                    if is_multi_part else session['final_name'])
@@ -3776,10 +3778,13 @@ def convert_ebook(args:dict)->tuple:
             session['output_channel'] = str(args['output_channel'])
             session['output_split'] = bool(args['output_split'])
             session['output_split_hours'] = args['output_split_hours']if args['output_split_hours'] is not None else default_output_split_hours
+            session['chapter_selection'] = args.get('chapter_selection')
             session['model_cache'] = f"{session['tts_engine']}-{session['fine_tuned']}"
             session['session_dir'] = os.path.join(tmp_dir, f'proc-{session_id}')
             session['status'] = status_tags['EDIT'] if session['blocks_preview'] else status_tags['CONVERTING'] 
             lang_prfx = (f'_{final_language}' if session.get('translate_enabled') else '')
+            if session['chapter_selection']:
+                lang_prfx += '_sample'
             session['process_dir'] = os.path.join(session['session_dir'], hashlib.md5((ebook_name + lang_prfx).encode()).hexdigest())
             session['chapters_dir'] = os.path.join(session['process_dir'], 'chapters')
             session['sentences_dir'] = os.path.join(session['chapters_dir'], 'sentences')

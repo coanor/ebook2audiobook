@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def select_book_session(ebook, tmp_dir, process_name, language, translation=None,
-                        explicit_session=None, new_session=False):
+                        explicit_session=None, new_session=False, chapter=None):
     """Return (session ID, reused), adopting matching older caches when needed.
 
     The source path identifies a book; the content checksum is used only when
@@ -19,6 +19,8 @@ def select_book_session(ebook, tmp_dir, process_name, language, translation=None
     source = Path(ebook).resolve()
     root = Path(tmp_dir)
     identity = {'ebook': str(source), 'language': language, 'translation': translation}
+    if chapter is not None:
+        identity['chapter'] = chapter
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     index_dir = root / 'cli_sessions'
     index_file = index_dir / f'{key}.json'
@@ -35,7 +37,7 @@ def select_book_session(ebook, tmp_dir, process_name, language, translation=None
                 session_id = None
             if session_id and not (root / f'proc-{session_id}').is_dir():
                 session_id = None
-        if session_id is None:
+        if session_id is None and chapter is None:
             # Pre-feature sessions have no index. Match the process directory
             # and original book checksum rather than guessing from a title.
             with source.open('rb') as file:

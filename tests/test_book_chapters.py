@@ -8,7 +8,7 @@ from unittest.mock import patch
 from bs4 import BeautifulSoup
 from ebooklib import epub
 
-from lib.classes.book_chapters import chapter_documents, chapter_groups
+from lib.classes.book_chapters import chapter_documents, chapter_groups, chapter_catalog, select_chapter
 
 
 def document(book, name, content):
@@ -24,6 +24,97 @@ def block(identifier, text, chapter, keep=True):
 
 
 class ChapterMappingTests(unittest.TestCase):
+    def test_book_title_wrapper_exposes_real_chapters_without_expanding_subsections(self):
+        book = epub.EpubBook()
+        book.set_title('旧唐书')
+        intro = document(book, 'intro.xhtml', '<h1>旧唐书</h1>')
+        first = document(book, 'first.xhtml', '<h1>本纪第一 高祖</h1>')
+        body = document(book, 'body.xhtml', '<h2>武德元年</h2><p>正文</p>')
+        second = document(book, 'second.xhtml', '<h1>本纪第二 太宗上</h1>')
+        book.spine = [intro, first, body, second]
+        book.toc = [(epub.Section('旧唐书', 'intro.xhtml'), [
+            (epub.Section('本纪第一 高祖', 'first.xhtml'),
+             [epub.Link('body.xhtml', '武德元年', 'sub')]),
+            epub.Link('second.xhtml', '本纪第二 太宗上', 'second'),
+        ])]
+        items = list(chapter_documents(book))
+        catalog = chapter_catalog(items)
+        self.assertEqual([chapter['title'] for chapter in catalog],
+                         ['旧唐书', '本纪第一 高祖', '本纪第二 太宗上'])
+        selected = select_chapter(catalog, '高祖')
+        self.assertEqual(selected['number'], 2)
+        self.assertEqual([doc.file_name for doc, chapter in items if chapter['key'] == selected['key']],
+                         ['first.xhtml', 'body.xhtml'])
+        self.assertEqual(select_chapter(catalog, '2'), selected)
+
+    def test_catalog_excludes_image_cover_and_typed_table_of_contents(self):
+        book = epub.EpubBook()
+        cover = document(book, 'cover.xhtml', '<img src="cover.jpg"/>')
+        toc = document(book, 'toc.xhtml', '<section epub:type="toc"><p>Contents</p></section>')
+        first = document(book, 'first.xhtml', '<h1>First</h1>')
+        book.spine = [cover, toc, first]
+        book.toc = [epub.Link('cover.xhtml', 'Cover', 'cover'),
+                    epub.Link('toc.xhtml', 'Contents', 'toc'),
+                    epub.Link('first.xhtml', 'First', 'first')]
+        catalog = chapter_catalog(chapter_documents(book))
+        self.assertEqual([chapter['title'] for chapter in catalog], ['First'])
+        self.assertEqual(select_chapter(catalog, '1')['title'], 'First')
+
+    def test_selection_rejects_missing_out_of_range_and_ambiguous_chapters(self):
+        catalog = [{'key': 'a', 'number': 1, 'title': '第一章 上'},
+                   {'key': 'b', 'number': 2, 'title': '第一章 下'}]
+        for selector in ('0', '3', '', 'missing'):
+            with self.subTest(selector=selector), self.assertRaises(ValueError):
+                select_chapter(catalog, selector)
+        with self.assertRaisesRegex(ValueError, 'Ambiguous'):
+            select_chapter(catalog, '第一章')
+        self.assertEqual(select_chapter(catalog, ' 第一章   下 ')['key'], 'b')
+
+    def test_numeric_selection_of_duplicate_titles_survives_normalized_document_names(self):
+        book = epub.EpubBook()
+        first = document(book, 'first.xhtml', '<h1>列传第一百五十</h1><p>First</p>')
+        second = document(book, 'second.xhtml', '<h1>列传第一百五十</h1><p>Second</p>')
+        book.spine = [first, second]
+        book.toc = [epub.Link('first.xhtml', '列传第一百五十', 'first'),
+                    epub.Link('second.xhtml', '列传第一百五十', 'second')]
+        catalog = chapter_catalog(chapter_documents(book))
+        selected = select_chapter(catalog, '2')
+        self.assertEqual(select_chapter(catalog, selected)['key'], 'second.xhtml#')
+        renamed = [dict(chapter, key=f"normalized/{chapter['key']}") for chapter in catalog]
+        self.assertEqual(select_chapter(renamed, selected)['key'], 'normalized/second.xhtml#')
+        with self.assertRaisesRegex(ValueError, 'Ambiguous'):
+            select_chapter(catalog, '列传第一百五十')
+
+    def test_get_blocks_extracts_only_selected_chapter_documents(self):
+        import zipfile
+        import lib.core as core
+
+        book = epub.EpubBook()
+        first = document(book, 'first.xhtml', '<h1>First</h1>')
+        second = document(book, 'second.xhtml', '<h1>Second</h1>')
+        body = document(book, 'body.xhtml', '<p>Second body</p>')
+        book.spine = [(item.id, 'yes') for item in (first, second, body)]
+        book.toc = [epub.Link('first.xhtml', 'First', 'first'),
+                    epub.Link('second.xhtml', 'Second', 'second')]
+        with tempfile.TemporaryDirectory() as folder:
+            archive = Path(folder) / 'book.epub'
+            with zipfile.ZipFile(archive, 'w'):
+                pass
+            selected = select_chapter(chapter_catalog(chapter_documents(book)), 'Second')
+            session = dict(id='parse-test', cancellation_requested=False, language='zho',
+                           language_iso1='zh', tts_engine='xtts', output_split=True,
+                           output_split_hours='chapters', chapter_selection=selected,
+                           epub_path=str(archive))
+            def extract(_, index, doc, *args):
+                return doc.file_name
+            with patch.object(core, 'context', SimpleNamespace(get_session=lambda _: session)), \
+                    patch.object(core, 'get_ebook_title', return_value='Book'), \
+                    patch.object(core, 'filter_blocks', side_effect=extract):
+                blocks = core.get_blocks('parse-test', book)
+            self.assertEqual(blocks, ['second.xhtml', 'body.xhtml'])
+            self.assertEqual([label['title'] for label in session['book_chapter_labels']],
+                             ['Second', 'Second'])
+
     def test_parent_chapter_spans_files_and_subsections_in_spine_order(self):
         book = epub.EpubBook()
         second = document(book, 'a-second.xhtml', '<h1 id="second">Second</h1><p>End</p>')
@@ -83,6 +174,44 @@ class ChapterMappingTests(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg is required')
 class ChapterExportTests(unittest.TestCase):
+    def test_single_chapter_sample_exports_original_number_and_separate_filename(self):
+        import numpy as np
+        import soundfile as sf
+        import lib.core as core
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            chapters = root / 'chapters'
+            sentences = chapters / 'sentences'
+            output = root / 'output'
+            chapters.mkdir()
+            output.mkdir()
+            blocks = [block('a', 'Selected heading', {'key': 'selected', 'title': '第六章'}),
+                      block('b', 'Selected body', {'key': 'selected', 'title': '第六章'})]
+            for item in blocks:
+                wave = np.sin(np.arange(12000) * 2 * np.pi * 220 / 24000).astype('float32') * 0.1
+                sf.write(str(chapters / f"{item['id']}.flac"), wave, 24000)
+                sentence_folder = sentences / item['id']
+                sentence_folder.mkdir(parents=True)
+                shutil.copyfile(chapters / f"{item['id']}.flac", sentence_folder / '0.flac')
+            session = dict(id='sample-test', is_gui_process=False, cancellation_requested=False,
+                           blocks_current={'blocks': blocks}, blocks_orig={'blocks': blocks},
+                           process_dir=str(root), chapters_dir=str(chapters), sentences_dir=str(sentences),
+                           audiobooks_dir=str(output), output_split=True, output_split_hours='chapters',
+                           output_format='wav', output_channel='mono', cover=None,
+                           metadata={'title': 'Book', 'creator': 'Author'}, final_name='book_sample.wav',
+                           chapter_selection={'number': 7, 'key': 'selected', 'title': '第六章'})
+            full_output = output / 'book_chapter7_第六章.wav'
+            full_output.write_bytes(b'previous full-book output')
+            with patch.object(core, 'context', SimpleNamespace(get_session=lambda _: session)):
+                files = core.combine_audio_chapters('sample-test')
+            self.assertEqual([Path(file).name for file in files], ['book_sample_chapter7_第六章.wav'])
+            self.assertAlmostEqual(sf.info(files[0]).duration, 1.0, places=2)
+            self.assertEqual(full_output.read_bytes(), b'previous full-book output')
+            subtitles = Path(files[0]).with_suffix('.vtt').read_text()
+            self.assertIn('Selected heading', subtitles)
+            self.assertIn('Selected body', subtitles)
+
     def test_actual_wav_export_groups_blocks_and_limits_subtitles_to_each_chapter(self):
         import numpy as np
         import soundfile as sf

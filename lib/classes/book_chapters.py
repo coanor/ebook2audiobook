@@ -2,19 +2,31 @@
 
 import copy
 import posixpath
+from collections.abc import Mapping
 from urllib.parse import unquote, urlsplit
 
 from bs4 import BeautifulSoup, NavigableString
 
 
-def _toc_entries(nodes):
+EXCLUDED_EPUB_TYPES = {
+    'frontmatter', 'backmatter', 'toc', 'titlepage', 'colophon',
+    'acknowledgments', 'dedication', 'glossary', 'index',
+    'appendix', 'bibliography', 'copyright-page', 'landmark',
+}
+
+
+def _toc_entries(nodes, book_title=None):
     for node in nodes:
         if isinstance(node, tuple):
             parent, children = node
             if getattr(parent, 'href', None):
                 yield parent
+                # Some books nest every chapter below a single book-title
+                # wrapper. Expand that wrapper, while keeping its own content.
+                if children and str(parent.title).strip() == book_title:
+                    yield from _toc_entries(children, book_title)
             else:
-                yield from _toc_entries(children)
+                yield from _toc_entries(children, book_title)
         elif getattr(node, 'href', None):
             yield node
 
@@ -54,7 +66,9 @@ def chapter_documents(book):
             documents.append(doc)
     names = {posixpath.normpath(unquote(doc.file_name)) for doc in documents}
     targets = {}
-    for entry in _toc_entries(book.toc):
+    titles = book.get_metadata('DC', 'title')
+    book_title = str(titles[0][0]).strip() if titles else None
+    for entry in _toc_entries(book.toc, book_title):
         href = urlsplit(entry.href)
         name = posixpath.normpath(unquote(href.path))
         if href.scheme or name not in names:
@@ -128,3 +142,59 @@ def chapter_groups(blocks, original_blocks):
         groups[-1]['indices'].append(index)
         previous_key = chapter['key']
     return groups
+
+
+def chapter_catalog(documents):
+    """List readable chapters, with one-based numbers, from document segments."""
+    catalog = []
+    seen = set()
+    title_counts = {}
+    for doc, chapter in documents:
+        soup = BeautifulSoup(doc.get_content(), 'html.parser')
+        if soup.body is None:
+            continue
+        section = soup.find('section')
+        epub_type = (soup.body.get('epub:type') or
+                     (section.get('epub:type', '') if section else '')).lower()
+        if any(part in epub_type for part in EXCLUDED_EPUB_TYPES):
+            continue
+        for tag in soup(['script', 'style']):
+            tag.decompose()
+        if not any(char.isalnum() for char in soup.body.get_text()):
+            continue
+        if chapter['key'] not in seen:
+            title = ' '.join(chapter['title'].split())
+            title_counts[title] = title_counts.get(title, 0) + 1
+            catalog.append(dict(chapter, number=len(catalog) + 1,
+                                occurrence=title_counts[title]))
+            seen.add(chapter['key'])
+    return catalog
+
+
+def select_chapter(catalog, selector):
+    """Resolve a number/title or relocate a catalog entry after EPUB normalization."""
+    normalized = lambda text: ' '.join(str(text).split())
+    if isinstance(selector, Mapping):
+        matches = [chapter for chapter in catalog if chapter['key'] == selector['key']]
+        if not matches:
+            matches = [chapter for chapter in catalog
+                       if normalized(chapter['title']) == normalized(selector['title'])
+                       and chapter['occurrence'] == selector.get('occurrence', 1)]
+        if len(matches) == 1:
+            return matches[0]
+        raise ValueError(f"Selected chapter {selector['title']!r} could not be located in the normalized EPUB")
+    selector = str(selector).strip()
+    if selector.isdecimal():
+        number = int(selector)
+        if 1 <= number <= len(catalog):
+            return catalog[number - 1]
+        raise ValueError(f'Chapter number must be between 1 and {len(catalog)}. Use --list_chapters.')
+    selector = normalized(selector)
+    matches = [chapter for chapter in catalog if normalized(chapter['title']) == selector]
+    if not matches and selector:
+        matches = [chapter for chapter in catalog if selector in normalized(chapter['title'])]
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        raise ValueError(f'Ambiguous chapter title {selector!r}. Use its number from --list_chapters.')
+    raise ValueError(f'Chapter {selector!r} was not found. Use --list_chapters.')

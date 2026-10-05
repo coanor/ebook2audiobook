@@ -10,6 +10,18 @@ from lib.classes.cli_session import select_book_session
 
 
 class RememberedBookSessionTests(unittest.TestCase):
+    def test_chapter_samples_have_separate_sessions_and_preserve_full_book_progress(self):
+        legacy, process = self.legacy_session()
+        self.assertEqual(self.select(), (legacy, True))
+        sample, reused = self.select(chapter='first.xhtml')
+        self.assertFalse(reused)
+        self.assertNotEqual(sample, legacy)
+        self.assertEqual(self.select(chapter='first.xhtml'), (sample, True))
+        second, _ = self.select(chapter='second.xhtml')
+        self.assertNotEqual(second, sample)
+        self.assertEqual(self.select(), (legacy, True))
+        self.assertEqual((process / 'sentences.flac').read_bytes(), b'saved progress')
+
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.addCleanup(self.folder.cleanup)

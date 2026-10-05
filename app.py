@@ -254,6 +254,8 @@ SML tags available:
     headless_optional_group = parser.add_argument_group('optional parameters')
     headless_optional_group.add_argument('--split_by_chapter', action='store_true', help='Export one audio file per top-level book chapter in the EPUB table of contents.')
     headless_optional_group.add_argument('--new_session', action='store_true', help='Start a fresh headless --ebook session, keeping previous progress intact.')
+    headless_optional_group.add_argument('--list_chapters', action='store_true', help='List readable EPUB chapters and exit without loading a TTS model.')
+    headless_optional_group.add_argument('--chapter', type=str, metavar='NUMBER_OR_TITLE', help='Convert only one listed EPUB chapter, using a separate remembered sample session.')
     headless_optional_group.add_argument(cli_options[9], type=str, default=None, metavar='ISO3', help='''Translate ebook to a target language (ISO 639-3 code, e.g. eng, fra, deu) before TTS synthesis.
 Uses argostranslate. The target language becomes the effective TTS language for the run.
 A copy of the source ebook is made with the _<iso3> suffix so translated and non-translated
@@ -313,6 +315,29 @@ Default to config.json model.""")
         parser.error('--new_session cannot be combined with --session or --workflow')
     if args['new_session'] and not (args.get('headless') and args.get('ebook')):
         parser.error('--new_session requires --headless and --ebook')
+    args['chapter_selection'] = None
+    if args['list_chapters'] or args['chapter'] is not None:
+        if not (args.get('headless') and args.get('ebook')) or args.get('ebooks_dir') or args.get('text') is not None:
+            parser.error('--chapter and --list_chapters require --headless and a single --ebook')
+        if Path(args['ebook']).suffix.lower() != '.epub':
+            parser.error('Chapter selection currently requires an EPUB file')
+        if args['chapter'] is not None and (args.get('session') or args.get('workflow')):
+            parser.error('--chapter manages a separate sample session; do not combine it with --session or --workflow')
+        from ebooklib import epub
+        from lib.classes.book_chapters import chapter_documents, chapter_catalog, select_chapter
+        try:
+            book = epub.read_epub(args['ebook'], {'ignore_ncx': False})
+            catalog = chapter_catalog(chapter_documents(book))
+            if not catalog:
+                raise ValueError('No readable EPUB chapters found')
+            if args['list_chapters']:
+                for chapter in catalog:
+                    print(f"{chapter['number']:3d}  {chapter['title']}")
+                return
+            args['chapter_selection'] = select_chapter(catalog, args['chapter'])
+            print(f"Selected chapter {args['chapter_selection']['number']}: {args['chapter_selection']['title']}")
+        except Exception as e:
+            parser.error(str(e))
 
     if not 'help' in args:
         args['script_mode'] = args['script_mode'] if args['script_mode'] else NATIVE
@@ -388,7 +413,8 @@ Default to config.json model.""")
                 try:
                     args['id'], reused = select_book_session(
                         args['ebook'], tmp_dir, process_name, language, translation,
-                        explicit_session=args.get('session'), new_session=args['new_session']
+                        explicit_session=args.get('session'), new_session=args['new_session'],
+                        chapter=args['chapter_selection']['key'] if args['chapter_selection'] else None
                     )
                 except (OSError, ValueError) as e:
                     print(f'Error selecting ebook session: {e}')
@@ -415,8 +441,8 @@ Default to config.json model.""")
             args['blocks_preview'] = False
             args['device'] = devices.get(args['device'].upper(), {}).get('proc') or devices['CPU']['proc']
             args['tts_engine'] = TTS_ENGINES[args['tts_engine']] if args['tts_engine'] in TTS_ENGINES.keys() else args['tts_engine'] if args['tts_engine'] in TTS_ENGINES.values() else None
-            args['output_split'] = True if args['split_by_chapter'] else default_output_split
-            args['output_split_hours'] = 'chapters' if args['split_by_chapter'] else default_output_split_hours
+            args['output_split'] = True if args['split_by_chapter'] or args['chapter_selection'] else default_output_split
+            args['output_split_hours'] = 'chapters' if args['split_by_chapter'] or args['chapter_selection'] else default_output_split_hours
             args['xtts_temperature'] = args['temperature']
             args['xtts_length_penalty'] = args['length_penalty']
             args['xtts_num_beams'] = args['num_beams']

@@ -157,6 +157,12 @@ with a matching `.vtt` subtitle file. `bash run.sh BOOK_FILE` saves these beside
 the source book, or in `OUTPUT_DIR` when set. Rerun the same command after an
 interruption to resume automatically; unchanged completed exports are reused.
 
+Chinese text keeps complete sentences within the configured language length
+limit. Longer sentences split at clause punctuation first, with word boundaries
+as a fallback for unpunctuated text. On resume, Chinese sentence boundaries are
+recomputed; blocks whose boundaries changed are regenerated, while unchanged
+cached blocks remain reusable.
+
 ## SML tags available
 - `[break]` — silence (random range **0.3–0.6 sec.**)
 - `[pause]` — silence (random range **1.0–1.6 sec.**)

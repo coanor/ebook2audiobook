@@ -53,6 +53,7 @@ from lib.classes.book_chapters import (
     chapter_documents, chapter_groups, chapter_catalog, select_chapter, EXCLUDED_EPUB_TYPES,
 )
 from lib.classes.chapter_exports import ChapterExportCache
+from lib.classes.chinese_sentences import split_chinese_sentences
 
 from lib import *
 
@@ -1917,6 +1918,8 @@ def get_sentences(session_id:str, text:str)->list|None:
         if session.get('translate_enabled') and session.get('translate'):
             lang = session['translate']
         tts_engine = session['tts_engine']
+        if lang == 'zho':
+            return split_chinese_sentences(text, language_mapping[lang]['max_chars'])
         max_chars = int(language_mapping[lang]['max_chars'] / 2)
         text, sml_blocks = escape_sml(text)
         assert not SML_TAG_PATTERN.search(text)
@@ -4220,6 +4223,7 @@ def finalize_audiobook(session_id:str)->tuple:
             progress_bar(0, desc=msg)
         blocks_current = session['blocks_current']
         blocks = blocks_current['blocks']
+        final_language = session.get('translate') if session.get('translate_enabled') and session.get('translate') else session['language']
         for idx, block in enumerate(blocks):
             if session['cancellation_requested']:
                 if session['status'] == status_tags['DISCONNECTED']:
@@ -4231,16 +4235,21 @@ def finalize_audiobook(session_id:str)->tuple:
             if not block['keep'] or not block['text'].strip():
                 block['sentences'] = []
                 continue
-            if block.get('sentences', []):
+            if block.get('sentences', []) and final_language != 'zho':
                 print(f'Block {idx} — sentences already split, skipping')
                 continue
             sentences_list = get_sentences(session_id, block['text'])
             if sentences_list is None:
                 error = 'No sentences found!'
                 return result(error, False)
+            if block.get('sentences') and block['sentences'] != sentences_list:
+                print(f'Block {idx} — updating Chinese sentence boundaries; cached audio will be regenerated')
+                if idx == blocks_current['block_resume']:
+                    blocks_current['sentence_resume'] = 0
             block['sentences'] = sentences_list
         blocks_current['blocks'] = blocks
         session['blocks_current'] = blocks_current
+        save_db_blocks(session_id)
         conversion = convert_chapters2audio(session_id)
         if not conversion:
             error = 'convert_chapters2audio() failed!'

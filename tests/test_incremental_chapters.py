@@ -157,6 +157,54 @@ class IncrementalChapterTests(unittest.TestCase):
             self.assertEqual(core.combine_audio_chapters('incremental', chapter_index=0), [str(self.first)])
             assemble.assert_not_called()
 
+    def test_resplit_resume_regenerates_changed_audio_and_reuses_unchanged_blocks(self):
+        first_text = '从 1940 年开始，这本书继续广泛的印刷发行。'
+        unchanged_text = '这个文本块的断句已经正确。'
+        last_text = '最后一个文本块尚未完成。'
+        blocks = [self.block('a', first_text, 'First'),
+                  self.block('b', unchanged_text, 'Second'),
+                  self.block('c', last_text, 'Third')]
+        blocks[0]['sentences'] = ['从 1940 年', '开始，这本书继续广泛的印刷发行。']
+        self.session.update(language='zho', tts_engine='xtts', status=core.status_tags['CONVERTING'],
+                            blocks_current=dict(blocks=blocks, block_resume=2, sentence_resume=0),
+                            blocks_saved=dict(blocks=copy.deepcopy(blocks)),
+                            blocks_orig=dict(blocks=copy.deepcopy(blocks)),
+                            blocks_current_db=str(self.root / 'blocks.db'))
+        for block in blocks[:2]:
+            self.complete_block(block)
+        self.write_audio(self.sentences / 'a' / '1.flac')
+        unchanged_stamp = (self.chapters / 'b.flac').stat().st_mtime_ns
+        generated = []
+
+        def synthesize(path, sentence, **kwargs):
+            generated.append(sentence)
+            if sentence == last_text:
+                return False, 'Simulated interruption after migration'
+            self.assertEqual(sentence, first_text)
+            self.write_audio(path)
+            return True, None
+
+        with patch.object(core, 'TTSManager', return_value=SimpleNamespace(convert_sentence2audio=synthesize)):
+            _, success = core.finalize_audiobook('incremental')
+        self.assertFalse(success)
+        self.assertEqual(generated, [first_text, last_text])
+        self.assertEqual((self.chapters / 'b.flac').stat().st_mtime_ns, unchanged_stamp)
+        self.assertFalse((self.sentences / 'a' / '1.flac').exists())
+        self.assertIn(first_text, self.first.with_suffix('.vtt').read_text())
+        first_stamp = self.first.stat().st_mtime_ns
+        generated.clear()
+        self.session['blocks_current'] = core.load_db_blocks(self.session['blocks_current_db'])
+
+        def resume(path, sentence, **kwargs):
+            generated.append(sentence)
+            self.write_audio(path)
+            return True, None
+
+        with patch.object(core, 'TTSManager', return_value=SimpleNamespace(convert_sentence2audio=resume)):
+            self.assertTrue(core.convert_chapters2audio('incremental'))
+        self.assertEqual(generated, [last_text])
+        self.assertEqual(self.first.stat().st_mtime_ns, first_stamp)
+
     def test_failed_reexport_keeps_previous_output_and_missing_subtitle_is_rebuilt(self):
         for block in self.blocks[:3]:
             if block['keep']:

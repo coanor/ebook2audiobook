@@ -141,12 +141,44 @@ class Bark(TTSUtils, TTSRegistry, name='bark'):
         bark_model._voice_gen_patched = True
     ##################################
 
+    def _repair_incomplete_internal_model(self)->None:
+        """Complete an interrupted Coqui Bark download without discarding good files.
+
+        Coqui's model manager treats an existing model directory as complete even
+        when a previous download stopped after writing only one checkpoint.  Keep
+        completed checkpoints and atomically add only the missing files.
+        """
+        if self.session['custom_model'] is not None:
+            return
+        from TTS.utils.manage import ModelManager
+        from huggingface_hub import hf_hub_download
+
+        manager = ModelManager(output_prefix=self.cache_dir, progress_bar=False)
+        model_item, model_full_name, _, _ = manager._set_model_item(self.model_path)
+        model_dir = Path(self.cache_dir) / model_full_name
+        urls = model_item.get('model_url', [])
+        missing_urls = [
+            url for url in urls
+            if not (model_dir / url.rsplit('/', 1)[-1]).is_file()
+        ]
+        if not missing_urls:
+            return
+
+        model_dir.mkdir(parents=True, exist_ok=True)
+        print(f'Incomplete Bark model detected; downloading {len(missing_urls)} missing file(s)…')
+        for url in missing_urls:
+            filename = url.rsplit('/', 1)[-1]
+            path_parts = url.split('/')
+            repo_id = '/'.join(path_parts[3:5])
+            hf_hub_download(repo_id=repo_id, filename=filename, local_dir=model_dir)
+
     def load_engine(self)->Any:
         msg = f"Loading TTS {self.tts_key} model, it takes a while, please be patient…"
         print(msg)
         self.cleanup_memory()
         engine = loaded_tts.get(self.tts_key)
         if not engine:
+            self._repair_incomplete_internal_model()
             engine = self._load_api(self.tts_key, self.model_path, self.device)
             try:
                 self._patch_bark_voice_gen(engine)

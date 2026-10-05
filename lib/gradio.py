@@ -32,7 +32,7 @@ def build_interface(args:dict)->gr.Blocks:
         custom_model_options = []
         fine_tuned_options = []
         audiobook_options = []
-        options_output_split_hours = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12']
+        options_output_split_hours = [('Book chapters', 'chapters'), ('30 minutes', '0.5')] + [(f'{hour} hour(s)', str(hour)) for hour in range(1, 13)]
         page_size = 15
         visible_gr_tab_xtts_params = interface_component_options['gr_tab_xtts_params']
         visible_gr_tab_bark_params = interface_component_options['gr_tab_bark_params']
@@ -97,9 +97,9 @@ def build_interface(args:dict)->gr.Blocks:
                                         gr_output_channel_list = gr.Dropdown(label='Channel', elem_id='gr_output_channel_list', choices=['mono', 'stereo'], type='value', value=default_output_channel, interactive=True, scale=1)
                                         with gr.Group(elem_id='gr_group_output_split'):
                                             gr_output_split = gr.Checkbox(label='Split File', elem_id='gr_output_split', value=default_output_split, interactive=True)
-                                            gr_row_output_split_hours = gr.Row(elem_id='gr_row_output_split_hours', visible=False)
+                                            gr_row_output_split_hours = gr.Row(elem_id='gr_row_output_split_hours', visible=default_output_split)
                                             with gr_row_output_split_hours:
-                                                gr_output_split_hours_markdown = gr.Markdown(elem_id='gr_output_split_hours_markdown',elem_classes=['gr-markdown-output-split-hours'], value='Hours<br/>/ Part')
+                                                gr_output_split_hours_markdown = gr.Markdown(elem_id='gr_output_split_hours_markdown',elem_classes=['gr-markdown-output-split-hours'], value='Split by')
                                                 gr_output_split_hours = gr.Dropdown(label='', elem_id='gr_output_split_hours', choices=options_output_split_hours, type='value', value=default_output_split_hours, interactive=True, scale=1)
                                 with gr.Group(elem_id='gr_group_session', elem_classes=['gr-group']):
                                     gr_session_markdown = gr.Markdown(elem_id='gr_session_markdown', elem_classes=['gr-markdown'], value='Session')

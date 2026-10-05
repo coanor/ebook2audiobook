@@ -49,6 +49,7 @@ from lib.classes.argos_translator import ArgosTranslator
 from lib.classes.tts_manager import TTSManager
 from lib.classes.tts_engines.common.audio import get_audiolist_duration, get_audio_duration
 from lib.classes.tts_engines.common.utils import build_vtt_file
+from lib.classes.book_chapters import chapter_documents, chapter_groups
 
 from lib import *
 
@@ -1350,8 +1351,11 @@ INTO A NEW TRAINING MODEL. YOU CAN IMPROVE IT OR ASK TO A TRAINING MODEL EXPERT.
                 error = 'No document body found!'
                 print(error)
                 return []
+            split_by_chapter = session.get('output_split') and session.get('output_split_hours') == 'chapters'
+            chapter_docs = list(chapter_documents(epubBook)) if split_by_chapter else [(doc, None) for doc in all_docs]
             title = get_ebook_title(epubBook, all_docs)
             blocks = []
+            chapter_labels = []
             stanza_nlp = False
             if session['language'] in year_to_decades_languages:
                 try:
@@ -1396,13 +1400,15 @@ INTO A NEW TRAINING MODEL. YOU CAN IMPROVE IT OR ASK TO A TRAINING MODEL EXPERT.
                 with zipfile.ZipFile(session['epub_path'], 'r') as zf:
                     zip_names = set(zf.namelist())
                     zip_basenames = {os.path.basename(n): n for n in zip_names}
-                    for doc_idx, doc in enumerate(all_docs):
+                    for doc_idx, (doc, chapter) in enumerate(chapter_docs):
                         text = filter_blocks(session_id, doc_idx, doc, stanza_nlp, is_num2words_compat, non_text_filter, zf, zip_names, zip_basenames)
                         if text is None:
                             error = f'Error extracting content from document #{doc_idx + 1}; aborting conversion to avoid partial output.'
                             show_alert(session_id, {"type": "warning", "msg": error})
                             return []
                         blocks.append(text)
+                        chapter_labels.append(chapter)
+                    session['book_chapter_labels'] = chapter_labels
             finally:
                 if stanza_nlp:
                     import gc, torch
@@ -3275,6 +3281,11 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
         chapter_files = []
         chapter_titles = []
         chapter_positions = []
+        book_chapter_parts = None
+        if session.get('output_split') and session.get('output_split_hours') == 'chapters':
+            book_chapter_parts = chapter_groups(
+                session['blocks_current']['blocks'], session['blocks_orig']['blocks']
+            )
         for x, block in enumerate(session['blocks_current']['blocks']):
             if not (block['keep'] and block['text'].strip()):
                 continue
@@ -3317,25 +3328,32 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
         if session.get('output_split'):
             part_files = []
             part_chapter_indices = []
-            cur_part = []
-            cur_indices = []
-            cur_duration = 0
-            max_part_duration = int(session['output_split_hours']) * 3600
-            for idx, (file, dur) in enumerate(zip(chapter_files, durations)):
-                if session['cancellation_requested']:
-                    return None
-                if cur_part and (cur_duration + dur > max_part_duration):
+            if book_chapter_parts is not None:
+                index_by_position = {position: index for index, position in enumerate(chapter_positions)}
+                for part in book_chapter_parts:
+                    indices = [index_by_position[position] for position in part['indices']]
+                    part_chapter_indices.append(indices)
+                    part_files.append([chapter_files[index] for index in indices])
+            else:
+                cur_part = []
+                cur_indices = []
+                cur_duration = 0
+                max_part_duration = float(session['output_split_hours']) * 3600
+                for idx, (file, dur) in enumerate(zip(chapter_files, durations)):
+                    if session['cancellation_requested']:
+                        return None
+                    if cur_part and (cur_duration + dur > max_part_duration):
+                        part_files.append(cur_part)
+                        part_chapter_indices.append(cur_indices)
+                        cur_part = []
+                        cur_indices = []
+                        cur_duration = 0
+                    cur_part.append(file)
+                    cur_indices.append(idx)
+                    cur_duration += dur
+                if cur_part:
                     part_files.append(cur_part)
                     part_chapter_indices.append(cur_indices)
-                    cur_part = []
-                    cur_indices = []
-                    cur_duration = 0
-                cur_part.append(file)
-                cur_indices.append(idx)
-                cur_duration += dur
-            if cur_part:
-                part_files.append(cur_part)
-                part_chapter_indices.append(cur_indices)
             pad_width = len(str(len(part_files)))
             is_multi_part = len(part_files) > 1
             for part_idx, (part_file_list, indices) in enumerate(zip(part_files, part_chapter_indices)):
@@ -3355,10 +3373,15 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
                 metadata_file = Path(session['process_dir']) / f'metadata_part{part_idx+1:0{pad_width}d}.txt'
                 part_chapters = [(chapter_files[i], chapter_titles[i]) for i in indices]
                 _generate_ffmpeg_metadata(part_chapters, str(metadata_file), default_audio_proc_format)
+                if book_chapter_parts is not None:
+                    chapter_title = get_sanitized(book_chapter_parts[part_idx]['title'])[:80] or 'Chapter'
+                    output_name = f"{Path(session['final_name']).stem}_chapter{part_idx+1:0{pad_width}d}_{chapter_title}.{session['output_format']}"
+                else:
+                    output_name = (f"{Path(session['final_name']).stem}_part{part_idx+1:0{pad_width}d}.{session['output_format']}"
+                                   if is_multi_part else session['final_name'])
                 final_file = os.path.join(
                     session['audiobooks_dir'],
-                    f"{Path(session['final_name']).stem}_part{part_idx+1:0{pad_width}d}.{session['output_format']}"
-                    if is_multi_part else session['final_name']
+                    output_name
                 )
                 block_indices = {chapter_positions[i] for i in indices} if is_multi_part else None
                 if _export_audio(merged_audio, metadata_file, final_file, block_indices=block_indices, part_num=part_idx+1):
@@ -3783,11 +3806,15 @@ def convert_ebook(args:dict)->tuple:
                     if voice_note:
                         msg += voice_note
                     print(msg)
-                    while True:
-                        choice = input("[s]kip / [r]esume / [d]elete and convert again: ").strip().lower()
-                        if choice in ('s', 'r', 'd'):
-                            break
-                        print("Please enter 's', 'r' or 'd'.")
+                    if args.get('auto_resume'):
+                        choice = 'r'
+                        print('Automatically resuming saved ebook progress.')
+                    else:
+                        while True:
+                            choice = input("[s]kip / [r]esume / [d]elete and convert again: ").strip().lower()
+                            if choice in ('s', 'r', 'd'):
+                                break
+                            print("Please enter 's', 'r' or 'd'.")
                     if choice == 'r':
                         if audio_pre_final_exist:
                             os.unlink(audio_pre_final_file)
@@ -3979,7 +4006,7 @@ def convert_ebook(args:dict)->tuple:
                                         blocks_current['blocks'] = blocks
                                         session['blocks_current'] = blocks_current
                                         save_db_blocks(session_id)
-                            epubBook = epub.read_epub(session['epub_path'], {'ignore_ncx': True})
+                            epubBook = epub.read_epub(session['epub_path'], {'ignore_ncx': False})
                             if epubBook:
                                 metadata = dict(session['metadata'])
                                 for key, value in metadata.items():
@@ -4033,8 +4060,9 @@ def convert_ebook(args:dict)->tuple:
                                                             "tts_engine": session['tts_engine'],
                                                             "fine_tuned": session['fine_tuned'],
                                                             "sentences": [],
+                                                            "book_chapter": session.get('book_chapter_labels', [])[i],
                                                         }
-                                                        for t in raw_blocks if t
+                                                        for i, t in enumerate(raw_blocks) if t
                                                     ],
                                                 }
                                             if session.get('blocks_orig', {}):
@@ -4051,6 +4079,28 @@ def convert_ebook(args:dict)->tuple:
                                                         if os.path.exists(session['blocks_saved_json']):
                                                             os.unlink(session['blocks_saved_json'])
                                                 save_json_blocks(session_id, 'blocks_orig')
+                                        if (session['output_split'] and session['output_split_hours'] == 'chapters'
+                                                and any(not block.get('book_chapter') for block in session['blocks_orig'].get('blocks', []))):
+                                            # Older sessions contain audio but no TOC mapping. Attach
+                                            # metadata by original text, preserving IDs and audio caches.
+                                            raw_blocks = get_blocks(session_id, epubBook)
+                                            if session.get('translate_enabled'):
+                                                raw_blocks, error = translate_blocks(session_id, list(raw_blocks))
+                                                if error is not None:
+                                                    return error, False
+                                            labels_by_text = {}
+                                            for text, label in zip(raw_blocks, session.get('book_chapter_labels', [])):
+                                                if text:
+                                                    labels_by_text.setdefault(text, []).append(label)
+                                            original = copy.deepcopy(session['blocks_orig'])
+                                            for block in original['blocks']:
+                                                labels = labels_by_text.get(block['text'], [])
+                                                if not labels:
+                                                    return ('The cached parse does not match the book chapter boundaries. '
+                                                            'Start a new session to split this book by chapters; existing audio is preserved.'), False
+                                                block['book_chapter'] = labels.pop(0)
+                                            session['blocks_orig'] = original
+                                            save_json_blocks(session_id, 'blocks_orig')
                                         if not session.get('blocks_current', {}):
                                             session['blocks_current'] = copy.deepcopy(session['blocks_orig'])
                                             save_db_blocks(session_id)

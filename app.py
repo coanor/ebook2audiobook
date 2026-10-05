@@ -108,7 +108,14 @@ def is_running_in_container()->bool:
 
 def is_port_in_use(port:int)->bool:
     with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as s:
-        return s.connect_ex(('0.0.0.0',port))==0
+        # 0.0.0.0 is valid for binding a server, but it is not a reliable
+        # destination for a client connection.  Some Linux/WSL networking
+        # setups leave the probe in SYN_SENT for minutes instead of refusing it.
+        s.settimeout(0.5)
+        try:
+            return s.connect_ex(('127.0.0.1', port)) == 0
+        except OSError:
+            return False
 
 def kill_previous_instances(script_name: str):
     current_pid = os.getpid()
@@ -232,7 +239,7 @@ SML tags available:
     all_group = parser.add_argument_group('**** The following options are for container only', 'Optional')
     all_group.add_argument(cli_options[0], type=str, help='Mandatory to build a container. The only value is: build_docker.')
     all_group.add_argument(cli_options[1], type=str, help='Optional. The only values are: podman and compose. without this option standard docker buildx is used.')
-    parser.add_argument(cli_options[2], type=str, help='Session to resume the conversion in case of interruption, crash, or reuse of custom models and custom cloning voices.')
+    parser.add_argument(cli_options[2], type=str, help='Override the session to resume. Headless --ebook runs remember their session automatically.')
 
     gui_group = parser.add_argument_group('**** The following option are for gradio/gui mode only', 'Optional')
     gui_group.add_argument(cli_options[3], action='store_true', help='''Enable a public shareable Gradio link.''')
@@ -245,6 +252,8 @@ SML tags available:
     headless_group.add_argument(cli_options[8], type=str, default=default_language_code, help='Language of the e-book. Default language is set in ./lib/lang.py sed as default if not present. All compatible language codes are in ./lib/lang.py')
 
     headless_optional_group = parser.add_argument_group('optional parameters')
+    headless_optional_group.add_argument('--split_by_chapter', action='store_true', help='Export one audio file per top-level book chapter in the EPUB table of contents.')
+    headless_optional_group.add_argument('--new_session', action='store_true', help='Start a fresh headless --ebook session, keeping previous progress intact.')
     headless_optional_group.add_argument(cli_options[9], type=str, default=None, metavar='ISO3', help='''Translate ebook to a target language (ISO 639-3 code, e.g. eng, fra, deu) before TTS synthesis.
 Uses argostranslate. The target language becomes the effective TTS language for the run.
 A copy of the source ebook is made with the _<iso3> suffix so translated and non-translated
@@ -300,6 +309,10 @@ Default to config.json model.""")
              sys.exit(1)
 
     args = vars(parser.parse_args())
+    if args['new_session'] and (args.get('session') or args.get('workflow')):
+        parser.error('--new_session cannot be combined with --session or --workflow')
+    if args['new_session'] and not (args.get('headless') and args.get('ebook')):
+        parser.error('--new_session requires --headless and --ebook')
 
     if not 'help' in args:
         args['script_mode'] = args['script_mode'] if args['script_mode'] else NATIVE
@@ -354,6 +367,34 @@ Default to config.json model.""")
 
         if args.get('headless', False):
             args['id'] = args['workflow'] if args['workflow'] else args['session'] if args['session'] else str(uuid.uuid4())
+            args['auto_resume'] = False
+            if (args.get('ebook') and not args.get('workflow')
+                    and not args.get('ebooks_dir') and args.get('text') is None
+                    and os.path.isfile(args['ebook'])):
+                from iso639 import Lang
+                from lib.classes.cli_session import select_book_session
+                language = args['language']
+                translation = args.get('translate')
+                try:
+                    language = Lang(language).pt3
+                    translation = Lang(translation).pt3 if translation else None
+                except Exception:
+                    pass
+                if translation == language:
+                    translation = None
+                process_name = c.strip_invalid_filename_characters(c.get_sanitized(Path(args['ebook']).stem))
+                if translation:
+                    process_name += f'_{translation}'
+                try:
+                    args['id'], reused = select_book_session(
+                        args['ebook'], tmp_dir, process_name, language, translation,
+                        explicit_session=args.get('session'), new_session=args['new_session']
+                    )
+                except (OSError, ValueError) as e:
+                    print(f'Error selecting ebook session: {e}')
+                    sys.exit(1)
+                args['auto_resume'] = not args.get('session')
+                print(f"{'Reusing' if reused else 'Saved new'} ebook session: {args['id']}")
             if args['id'] == workflow_id or not args['session']:
                 session = c.context.set_session(args['id'])
             else:
@@ -374,8 +415,8 @@ Default to config.json model.""")
             args['blocks_preview'] = False
             args['device'] = devices.get(args['device'].upper(), {}).get('proc') or devices['CPU']['proc']
             args['tts_engine'] = TTS_ENGINES[args['tts_engine']] if args['tts_engine'] in TTS_ENGINES.keys() else args['tts_engine'] if args['tts_engine'] in TTS_ENGINES.values() else None
-            args['output_split'] = default_output_split
-            args['output_split_hours'] = default_output_split_hours
+            args['output_split'] = True if args['split_by_chapter'] else default_output_split
+            args['output_split_hours'] = 'chapters' if args['split_by_chapter'] else default_output_split_hours
             args['xtts_temperature'] = args['temperature']
             args['xtts_length_penalty'] = args['length_penalty']
             args['xtts_num_beams'] = args['num_beams']

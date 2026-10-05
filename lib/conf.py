@@ -30,7 +30,7 @@ cli_options = [
     '--speed', '--enable_text_splitting', '--text_temp',
     '--waveform_temp', '--output_dir', 
     '--abs_url', '--abs_api_token', '--abs_library',
-    '--version', '--workflow', '--docker_device', '--help'
+    '--version', '--workflow', '--docker_device', '--help', '--split_by_chapter', '--new_session'
 ]
 
 workflow_id = 'ba800d22-ee51-11ef-ac34-d4ae52cfd9ce'
@@ -297,8 +297,8 @@ default_audio_proc_samplerate = 24000
 default_audio_proc_format = 'flac' # or 'ogg', 'wav' (wav format is ok but limited to process files < 4GB)
 default_output_format = 'm4b'
 default_output_channel = 'mono' # mono or stereo
-default_output_split = False
-default_output_split_hours = '6' # if the final output exceeds output_split_hours * 2 hours, the final file is split by output_split_hours plus any remaining time.
+default_output_split = True
+default_output_split_hours = 'chapters' # One output per top-level book chapter; use a number for duration splitting.
 default_abs_url = 'http://127.0.0.1:13378'
 default_abs_api_token = ''
 default_abs_library = ''

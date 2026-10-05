@@ -4,6 +4,7 @@ set -euo pipefail
 if [[ $# -eq 0 || "$1" == "--help" || "$1" == "-h" ]]; then
   echo 'Usage: bash run.sh BOOK_FILE [additional options]'
   echo 'Output defaults to the book directory. Set OUTPUT_DIR to use a shared folder.'
+  echo 'Each completed book chapter is exported immediately; rerun the same command to resume.'
   echo 'Example: bash run.sh "/mnt/d/ai/books/jinrong.epub"'
   if [[ $# -eq 0 ]]; then
     exit 2

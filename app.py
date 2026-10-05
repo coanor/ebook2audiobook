@@ -252,7 +252,7 @@ SML tags available:
     headless_group.add_argument(cli_options[8], type=str, default=default_language_code, help='Language of the e-book. Default language is set in ./lib/lang.py sed as default if not present. All compatible language codes are in ./lib/lang.py')
 
     headless_optional_group = parser.add_argument_group('optional parameters')
-    headless_optional_group.add_argument('--split_by_chapter', action='store_true', help='Export one audio file per top-level book chapter in the EPUB table of contents.')
+    headless_optional_group.add_argument('--split_by_chapter', action='store_true', help='Export each top-level book chapter as soon as its audio is complete, using the EPUB table of contents.')
     headless_optional_group.add_argument('--new_session', action='store_true', help='Start a fresh headless --ebook session, keeping previous progress intact.')
     headless_optional_group.add_argument('--list_chapters', action='store_true', help='List readable EPUB chapters and exit without loading a TTS model.')
     headless_optional_group.add_argument('--chapter', type=str, metavar='NUMBER_OR_TITLE', help='Convert only one listed EPUB chapter, using a separate remembered sample session.')

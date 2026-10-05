@@ -52,6 +52,7 @@ from lib.classes.tts_engines.common.utils import build_vtt_file
 from lib.classes.book_chapters import (
     chapter_documents, chapter_groups, chapter_catalog, select_chapter, EXCLUDED_EPUB_TYPES,
 )
+from lib.classes.chapter_exports import ChapterExportCache
 
 from lib import *
 
@@ -2859,6 +2860,16 @@ def convert_chapters2audio(session_id:str)->bool:
             return False
         if not session['ebook']:
             return False
+        chapter_ends = {}
+        if session.get('output_split') and session.get('output_split_hours') == 'chapters':
+            parts = chapter_groups(blocks, session['blocks_orig']['blocks'])
+            chapter_ends = {part['indices'][-1]: index for index, part in enumerate(parts)}
+
+        def export_completed_chapter(position):
+            if position not in chapter_ends:
+                return True
+            return bool(combine_audio_chapters(session_id, chapter_index=chapter_ends[position]))
+
         ebook_name = Path(session['ebook']).name
         chapters_dir = session['chapters_dir']
         sentences_dir = session['sentences_dir']
@@ -2904,6 +2915,8 @@ def convert_chapters2audio(session_id:str)->bool:
                             cnt = len(valid_idx)
                             global_sent += cnt
                             t.update(cnt)
+                            if not export_completed_chapter(x):
+                                return False
                             continue
                         show_alert(session_id, {'type': 'warning', 'msg': f'Block {x} has {len(missing_sentences)} missing audio files, reconverting…'})
                         _reset_chapter_file(block_id)
@@ -2957,7 +2970,7 @@ def convert_chapters2audio(session_id:str)->bool:
                             progress_bar(progress=total_progress, desc=f'{ebook_name} - {sentence}')
                 sent_end = global_sent - 1
                 show_alert(session_id, {'type': 'info', 'msg': f'End of Chapter {ch_num} (block {x})'})
-                if converted or block_changed or missing_sentences:
+                if converted or block_changed or missing_sentences or not os.path.exists(chapter_audio_file):
                     show_alert(session_id, {'type': 'info', 'msg': f'Combining chapter {ch_num} (block {x}) to audio, sentence {sent_start} to {sent_end}'})
                     session['blocks_current'] = blocks_current
                     save_db_stamp(session_id)
@@ -2965,6 +2978,9 @@ def convert_chapters2audio(session_id:str)->bool:
                     if not combine_audio_sentences(session_id, chapter_audio_file, block_id, block_len):
                         show_alert(session_id, {'type': 'warning', 'msg': 'combine_audio_sentences() failed!'})
                         return False
+                if not export_completed_chapter(x):
+                    show_alert(session_id, {'type': 'warning', 'msg': 'Exporting completed book chapter failed!'})
+                    return False
             #blocks_current['block_resume'] = 0
             #blocks_current['sentence_resume'] = 0
             session['blocks_current'] = blocks_current
@@ -3028,7 +3044,7 @@ def combine_audio_sentences(session_id:str, file:str, block_id:str, sentence_cou
         DependencyError(e)
         return False
 
-def combine_audio_chapters(session_id:str)->list[str]|None:
+def combine_audio_chapters(session_id:str, chapter_index:int|None=None)->list[str]|None:
     
     def _on_progress(p:float, desc:str)->None:
         if is_gui_process:
@@ -3110,9 +3126,18 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
             return False
 
     def _export_audio(combined_audio:str, metadata_file:str, final_file:str, block_indices:set=None, part_num:int=None)->bool:
+        destination = Path(final_file)
+        temporary_audio = None
+        temporary_vtt = None
         try:
             if session['cancellation_requested']:
                 return False
+            descriptor, temporary_audio = tempfile.mkstemp(
+                prefix=f'.{destination.stem}_', suffix=destination.suffix, dir=destination.parent
+            )
+            os.close(descriptor)
+            final_file = temporary_audio
+            temporary_vtt = str(Path(temporary_audio).with_suffix('.vtt'))
             ffprobe_cmd = [
                 shutil.which('ffprobe'), '-v', 'error', '-threads', '0', '-select_streams', 'a:0',
                 '-show_entries', 'stream=codec_name,sample_rate,sample_fmt',
@@ -3190,7 +3215,7 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
                 error = f'{Path(final_file).name} is corrupted or does not exist'
                 print(error)
                 return False
-            if session['cover'] is not None:
+            if isinstance(session['cover'], (str, os.PathLike)):
                 cover_path = session['cover']
                 msg = f'Adding cover {cover_path} into the final audiobook file…'
                 print(msg)
@@ -3261,17 +3286,24 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
                         tags.save(final_file, v1=ID3v1SaveOptions.REMOVE, v2_version=3)
                     if audio is not None:
                         audio.save()
-            final_vtt = os.path.join(session['audiobooks_dir'], f'{Path(final_file).stem}.vtt')
-            vtt_built, error = build_vtt_file(session, vtt_path=final_vtt, block_indices=block_indices)
+            vtt_built, error = build_vtt_file(session, vtt_path=temporary_vtt, block_indices=block_indices)
             if not vtt_built:
                 error = f'build_vtt_file() error: {error}'
                 print(error)
                 return False
+            if session['cancellation_requested']:
+                return False
+            os.replace(temporary_vtt, destination.with_suffix('.vtt'))
+            os.replace(temporary_audio, destination)
             return True
         except Exception as e:
             error = f'Export failed: {e}'
             print(error)
             return False
+        finally:
+            for temporary in (temporary_audio, temporary_vtt):
+                if temporary is not None:
+                    Path(temporary).unlink(missing_ok=True)
 
     try:
         session = context.get_session(session_id)
@@ -3286,7 +3318,14 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
             book_chapter_parts = chapter_groups(
                 session['blocks_current']['blocks'], session['blocks_orig']['blocks']
             )
+        selected_positions = None
+        if chapter_index is not None:
+            if book_chapter_parts is None or not 0 <= chapter_index < len(book_chapter_parts):
+                raise ValueError('A valid book chapter index is required for incremental export')
+            selected_positions = set(book_chapter_parts[chapter_index]['indices'])
         for x, block in enumerate(session['blocks_current']['blocks']):
+            if selected_positions is not None and x not in selected_positions:
+                continue
             if not (block['keep'] and block['text'].strip()):
                 continue
             if not block.get('sentences'):
@@ -3309,7 +3348,7 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
         chunks_size = 892
         total_duration = 0.0
         durations = []
-        for i in range(0, len(chapter_files), chunks_size):
+        for i in range(0, len(chapter_files) if book_chapter_parts is None else 0, chunks_size):
             filepaths = [
                 os.path.join(session['chapters_dir'], f)
                 for f in chapter_files[i:i + chunks_size]
@@ -3319,7 +3358,7 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
                 dur = durations_dict.get(path, 0.0)
                 durations.append(dur)
                 total_duration += dur
-        if len(durations) != len(chapter_files):
+        if book_chapter_parts is None and len(durations) != len(chapter_files):
             error = f'Duration count mismatch: {len(durations)} durations vs {len(chapter_files)} chapter files'
             print(error)
             return None
@@ -3328,10 +3367,14 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
         if session.get('output_split'):
             part_files = []
             part_chapter_indices = []
+            part_numbers = []
             if book_chapter_parts is not None:
                 index_by_position = {position: index for index, position in enumerate(chapter_positions)}
-                for part in book_chapter_parts:
+                for part_idx, part in enumerate(book_chapter_parts):
+                    if chapter_index is not None and part_idx != chapter_index:
+                        continue
                     indices = [index_by_position[position] for position in part['indices']]
+                    part_numbers.append(part_idx)
                     part_chapter_indices.append(indices)
                     part_files.append([chapter_files[index] for index in indices])
             else:
@@ -3354,9 +3397,29 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
                 if cur_part:
                     part_files.append(cur_part)
                     part_chapter_indices.append(cur_indices)
-            pad_width = len(str(len(part_files)))
+                part_numbers = list(range(len(part_files)))
+            pad_width = len(str(len(book_chapter_parts) if book_chapter_parts is not None else len(part_files)))
             is_multi_part = len(part_files) > 1
-            for part_idx, (part_file_list, indices) in enumerate(zip(part_files, part_chapter_indices)):
+            for part_idx, part_file_list, indices in zip(part_numbers, part_files, part_chapter_indices):
+                if session['cancellation_requested']:
+                    return None
+                if book_chapter_parts is not None:
+                    chapter_title = get_sanitized(book_chapter_parts[part_idx]['title'])[:80] or 'Chapter'
+                    selection = session.get('chapter_selection')
+                    chapter_number = selection['number'] if selection else part_idx + 1
+                    output_name = f"{Path(session['final_name']).stem}_chapter{chapter_number:0{pad_width}d}_{chapter_title}.{session['output_format']}"
+                else:
+                    output_name = (f"{Path(session['final_name']).stem}_part{part_idx+1:0{pad_width}d}.{session['output_format']}"
+                                   if is_multi_part else session['final_name'])
+                final_file = os.path.join(session['audiobooks_dir'], output_name)
+                block_indices = {chapter_positions[i] for i in indices} if book_chapter_parts is not None or is_multi_part else None
+                export_cache = None
+                if book_chapter_parts is not None:
+                    export_cache = ChapterExportCache(session, part_idx, block_indices, final_file, default_audio_proc_format)
+                    if export_cache.is_current():
+                        print(f'Completed chapter already exported: {final_file}')
+                        exported_files.append(final_file)
+                        continue
                 concat_list = os.path.join(concat_dir, f'concat_list_chapters_{part_idx+1:0{pad_width}d}.txt')
                 with open(concat_list, 'w') as f:
                     for file in part_file_list:
@@ -3372,22 +3435,15 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
                     return None
                 metadata_file = Path(session['process_dir']) / f'metadata_part{part_idx+1:0{pad_width}d}.txt'
                 part_chapters = [(chapter_files[i], chapter_titles[i]) for i in indices]
-                _generate_ffmpeg_metadata(part_chapters, str(metadata_file), default_audio_proc_format)
-                if book_chapter_parts is not None:
-                    chapter_title = get_sanitized(book_chapter_parts[part_idx]['title'])[:80] or 'Chapter'
-                    selection = session.get('chapter_selection')
-                    chapter_number = selection['number'] if selection else part_idx + 1
-                    output_name = f"{Path(session['final_name']).stem}_chapter{chapter_number:0{pad_width}d}_{chapter_title}.{session['output_format']}"
-                else:
-                    output_name = (f"{Path(session['final_name']).stem}_part{part_idx+1:0{pad_width}d}.{session['output_format']}"
-                                   if is_multi_part else session['final_name'])
-                final_file = os.path.join(
-                    session['audiobooks_dir'],
-                    output_name
-                )
-                block_indices = {chapter_positions[i] for i in indices} if is_multi_part else None
+                if not _generate_ffmpeg_metadata(part_chapters, str(metadata_file), default_audio_proc_format):
+                    return None
                 if _export_audio(merged_audio, metadata_file, final_file, block_indices=block_indices, part_num=part_idx+1):
+                    if export_cache is not None:
+                        export_cache.remember()
+                        print(f'Chapter ready: {final_file}')
                     exported_files.append(final_file)
+                else:
+                    return None
         else:
             concat_list = os.path.join(concat_dir, 'concat_list_chapters_1.txt')
             merged_audio = Path(session['process_dir']) / f"{get_sanitized(session['metadata']['title'])}.{default_audio_proc_format}"
@@ -3403,7 +3459,8 @@ def combine_audio_chapters(session_id:str)->list[str]|None:
                 return None
             metadata_file = os.path.join(session['process_dir'], 'metadata.txt')
             chapters_zip = list(zip(chapter_files, chapter_titles))
-            _generate_ffmpeg_metadata(chapters_zip, metadata_file, default_audio_proc_format)
+            if not _generate_ffmpeg_metadata(chapters_zip, metadata_file, default_audio_proc_format):
+                return None
             final_file = os.path.join(session['audiobooks_dir'], session['final_name'])
             if _export_audio(merged_audio, metadata_file, final_file):
                 exported_files.append(final_file)

@@ -150,6 +150,13 @@ https://github.com/user-attachments/assets/81c4baad-117e-4db5-ac86-efc2b7fea921
 - `.m4b`, `.m4a`, `.mp4`, `.webm`, `.mov`, `.mp3`, `.flac`, `.wav`, `.ogg`, `.aac`
 - Process format can be changed in lib/conf.py
 
+With `--split_by_chapter` (enabled by `run.sh`), each completed book chapter is
+exported immediately, so you can listen while later chapters are still being
+converted. Output names include the book name, chapter number, and chapter title,
+with a matching `.vtt` subtitle file. `bash run.sh BOOK_FILE` saves these beside
+the source book, or in `OUTPUT_DIR` when set. Rerun the same command after an
+interruption to resume automatically; unchanged completed exports are reused.
+
 ## SML tags available
 - `[break]` — silence (random range **0.3–0.6 sec.**)
 - `[pause]` — silence (random range **1.0–1.6 sec.**)

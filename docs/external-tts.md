@@ -5,10 +5,29 @@ downloaded models, environments and book progress are shared with the main
 checkout through `start-local.sh`.
 
 ```bash
-bash run.sh "/path/book.epub" cosyvoice
-bash run.sh "/path/book.epub" qwen3
-bash run.sh "/path/book.epub" indextts
+bash run.sh --ebook "/path/book.epub" --tts=cosyvoice
+bash run.sh --ebook "/path/book.epub" --tts=qwen3
+bash run.sh --ebook "/path/book.epub" --tts=indextts
 ```
+
+`--tts ENGINE` and the original `--tts_engine ENGINE` are also accepted.
+Engine selection defaults to XTTS. The older `BOOK_FILE [TTS_ENGINE]` positional
+syntax remains supported.
+
+For a short sample, pass literal text (not a file path):
+
+```bash
+bash run.sh --tts=cosyvoice --text "五千年的文明，从这里开始。"
+```
+
+A text file is a file input: `bash run.sh --tts=qwen3 --ebook "/path/book.txt"`.
+Choose exactly one of `--ebook` and `--text`. Raw-text audio defaults to the
+caller’s current directory; file audio defaults to the source file’s directory.
+Use `--output_dir /path/output` or `OUTPUT_DIR` to override it (the flag takes
+priority). Other existing options, including `--chapter`, `--voice` and
+`--speaker`, can be passed alongside these flags. Chapter selection and
+automatic remembered resume apply to `--ebook`; raw text uses the existing
+text-conversion flow.
 
 Each engine exports completed book chapters beside the book, using the existing
 chapter filename rules. Rerunning the same command resumes automatically.
@@ -20,9 +39,9 @@ a number. Numbers refer to this list, not the chapter numbers printed in the boo
 Selecting a title includes its own subsections and stops before sibling chapters:
 
 ```bash
-bash run.sh "/mnt/d/ai/books/如何阅读一本书.epub" cosyvoice --list_chapters
-bash run.sh "/mnt/d/ai/books/如何阅读一本书.epub" cosyvoice --chapter "第四章 阅读的第二个层次：检视阅读"
-bash run.sh "/mnt/d/ai/books/置身事内.epub" qwen3 --chapter "第四章 工业化中的政府角色"
+bash run.sh --ebook "/mnt/d/ai/books/如何阅读一本书.epub" --tts=cosyvoice --list_chapters
+bash run.sh --ebook "/mnt/d/ai/books/如何阅读一本书.epub" --tts=cosyvoice --chapter "第四章 阅读的第二个层次：检视阅读"
+bash run.sh --ebook "/mnt/d/ai/books/置身事内.epub" --tts=qwen3 --chapter "第四章 工业化中的政府角色"
 ```
 
 Nested selections use a separate remembered session from older part samples.
@@ -34,7 +53,7 @@ Qwen3 uses the downloaded **1.7B CustomVoice** model and defaults to **Uncle_Fu*
 a mature Chinese male preset. Choose another preset with `--speaker`:
 
 ```bash
-bash run.sh "/path/book.epub" qwen3 --speaker Vivian --chapter "序言"
+bash run.sh --ebook "/path/book.epub" --tts=qwen3 --speaker Vivian --chapter "序言"
 ```
 
 Supported presets: `Uncle_Fu`, `Vivian`, `Serena`, `Dylan`, `Eric`, `Ryan`,
@@ -45,8 +64,8 @@ Changing the speaker selects a separate resume session.
 CosyVoice and IndexTTS accept a reference recording:
 
 ```bash
-bash run.sh "/path/book.epub" cosyvoice --voice "/path/reference.wav"
-bash run.sh "/path/book.epub" indextts --voice "/path/reference.wav"
+bash run.sh --ebook "/path/book.epub" --tts=cosyvoice --voice "/path/reference.wav"
+bash run.sh --ebook "/path/book.epub" --tts=indextts --voice "/path/reference.wav"
 ```
 
 Without `--voice`, both use CosyVoice's bundled Chinese example recording at

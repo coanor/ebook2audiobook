@@ -267,7 +267,7 @@ Keys may be absolute paths or basenames. Example:
 {"book1.epub": "/voices/eng/adult/female/alice.wav", "/abs/path/book2.epub": null}''')
     headless_optional_group.add_argument(cli_options[12], type=str, default=default_device, choices=list(devices.keys())+[k.lower() for k in devices.keys()], help=f'''Processor unit type for the conversion.
 Default is set in ./lib/conf.py if not present. Fall back to CPU if CUDA or MPS is not available.''')
-    headless_optional_group.add_argument(cli_options[13], type=str, default=TTS_ENGINES['XTTS'], choices=tts_engine_list_keys+tts_engine_list_values, help=f'''Preferred TTS engine (available are: {tts_engine_list_keys+tts_engine_list_values}.
+    headless_optional_group.add_argument(cli_options[13], '--tts', dest='tts_engine', type=str, default=TTS_ENGINES['XTTS'], choices=tts_engine_list_keys+tts_engine_list_values, help=f'''Preferred TTS engine (available are: {tts_engine_list_keys+tts_engine_list_values}.
 Default depends on the selected language. The tts engine should be compatible with the chosen language''')
     headless_optional_group.add_argument('--speaker', type=str, default=None,
                                         help='Qwen3 CustomVoice speaker; defaults to Uncle_Fu. Example: --speaker Vivian.')
@@ -309,7 +309,7 @@ Default to config.json model.""")
     internal_group.add_argument(cli_options[34], type=str, default=None, help=argparse.SUPPRESS)
 
     for arg in sys.argv:
-         if arg.startswith('--') and arg not in cli_options:
+         if arg.startswith('--') and arg.split('=', 1)[0] not in cli_options:
              error = f'Error: Unrecognized option "{arg}"'
              print(error)
              sys.exit(1)

@@ -65,27 +65,108 @@ class ModelOutputTests(unittest.TestCase):
 
 
 class LauncherTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.root = Path(self.folder.name)
+        shutil.copy(Path(__file__).resolve().parents[1] / 'run.sh', self.root / 'run.sh')
+        launcher = self.root / 'start-local.sh'
+        launcher.write_text('#!' + sys.executable + '\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n')
+        launcher.chmod(0o755)
+        self.book = self.root / '书本目录' / '一本书.epub'
+        self.book.parent.mkdir()
+        self.book.touch()
+        self.env = dict(os.environ)
+        self.env.pop('OUTPUT_DIR', None)
+
+    def run_launcher(self, *options, check=True):
+        return subprocess.run(['bash', str(self.root / 'run.sh'), *map(str, options)],
+                              cwd=self.root, env=self.env, capture_output=True, text=True, check=check)
+
     def test_all_external_engine_arguments_reach_the_existing_pipeline(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            shutil.copy(Path(__file__).resolve().parents[1] / 'run.sh', root / 'run.sh')
-            launcher = root / 'start-local.sh'
-            launcher.write_text('#!' + sys.executable + '\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n')
-            launcher.chmod(0o755)
-            book = root / '一本书.epub'
-            book.touch()
-            for engine in EXTERNAL_ENGINES:
-                with self.subTest(engine=engine):
-                    options = ['--speaker', 'Vivian'] if engine == 'qwen3' else []
-                    completed = subprocess.run(['bash', str(root / 'run.sh'), str(book), engine, *options],
-                                               capture_output=True, text=True, check=True)
-                    args = json.loads(completed.stdout)
-                    self.assertEqual(args[args.index('--tts_engine') + 1], engine)
-                    self.assertEqual(args[args.index('--output_dir') + 1], str(root))
-                    self.assertIn('--split_by_chapter', args)
-                    self.assertEqual(args[args.index('--ebook') + 1], str(book))
-                    if options:
-                        self.assertEqual(args[-2:], options)
+        for engine in EXTERNAL_ENGINES:
+            with self.subTest(engine=engine):
+                options = ['--speaker', 'Vivian'] if engine == 'qwen3' else []
+                args = json.loads(self.run_launcher(self.book, engine, *options).stdout)
+                self.assertEqual(args[args.index('--tts_engine') + 1], engine)
+                self.assertEqual(args[args.index('--output_dir') + 1], str(self.book.parent))
+                self.assertIn('--split_by_chapter', args)
+                self.assertEqual(args[args.index('--ebook') + 1], str(self.book))
+                if options:
+                    self.assertEqual(args[-2:], options)
+
+    def test_named_input_and_engine_flags_accept_equals_spaces_and_any_order(self):
+        cases = [('--tts=qwen3', '--ebook', self.book),
+                 ('--ebook='+str(self.book), '--tts', 'QWEN3'),
+                 ('--chapter', '第四章', '--tts=qwen3', '--ebook', self.book),
+                 (self.book, '--tts_engine=qwen3'),
+                 ('--tts_engine', 'qwen3', '--ebook', self.book)]
+        for options in cases:
+            with self.subTest(options=options):
+                args = json.loads(self.run_launcher(*options).stdout)
+                self.assertEqual(args[args.index('--tts_engine') + 1], 'qwen3')
+                self.assertEqual(args.count('--tts_engine'), 1)
+                self.assertEqual(args[args.index('--ebook') + 1], str(self.book))
+                self.assertEqual(args.count('--ebook'), 1)
+                self.assertEqual(args[args.index('--output_dir') + 1], str(self.book.parent))
+                if '--chapter' in options:
+                    self.assertEqual(args[-2:], ['--chapter', '第四章'])
+
+    def test_raw_text_keeps_unicode_newlines_quotes_and_defaults_to_caller_directory(self):
+        text = '五千年，文明的起源。\n他说："你好"。$HOME `literal`'
+        for options in [('--text', text, '--tts=cosyvoice'), ('--tts=cosyvoice', '--text='+text)]:
+            with self.subTest(options=options):
+                args = json.loads(self.run_launcher(*options).stdout)
+                self.assertEqual(args[args.index('--text') + 1], text)
+                self.assertNotIn('--ebook', args)
+                self.assertNotIn('--split_by_chapter', args)
+                self.assertEqual(args[args.index('--output_dir') + 1], str(self.root))
+
+    def test_output_flag_overrides_environment_and_resolves_relative_to_caller(self):
+        self.env['OUTPUT_DIR'] = str(self.root / 'environment-output')
+        for flag in [('--output_dir', 'custom output'), ('--output_dir=custom output',)]:
+            args = json.loads(self.run_launcher('--tts=bark', '--ebook', self.book, *flag).stdout)
+            self.assertEqual(args[args.index('--output_dir') + 1], str(self.root / 'custom output'))
+            self.assertEqual(args.count('--output_dir'), 1)
+        self.assertFalse((self.root / 'environment-output').exists())
+
+    def test_text_starting_with_option_characters_stays_an_input_value(self):
+        args = json.loads(self.run_launcher('--tts=cosyvoice', '--text=--tts=qwen3').stdout)
+        self.assertIn('--text=--tts=qwen3', args)
+        self.assertEqual(args[args.index('--tts_engine') + 1], 'cosyvoice')
+
+    def test_application_accepts_engine_alias_and_equals_input_without_synthesis(self):
+        app = Path(__file__).resolve().parents[1] / 'app.py'
+        result = subprocess.run([sys.executable, str(app), '--tts=qwen3',
+                                 '--text=五千年的文明。', '--help'],
+                                capture_output=True, text=True, check=True)
+        self.assertIn('--tts {', result.stdout)
+        invalid = subprocess.run([sys.executable, str(app), '--tts=unknown', '--help'],
+                                 capture_output=True, text=True)
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn('invalid choice', invalid.stderr)
+
+    def test_invalid_inputs_fail_before_launcher_is_called(self):
+        for options in [(), ('--tts=qwen3',), ('--ebook',), ('--text',),
+                        ('--tts',), ('--ebook', self.book, '--tts'),
+                        ('--text=',), ('--ebook', 'missing.epub'),
+                        ('--ebook', self.book, '--text', 'text'),
+                        ('--text', 'text', '--tts=unknown'),
+                        ('--ebook', self.book, '--output_dir=')]:
+            with self.subTest(options=options):
+                result = self.run_launcher(*options, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('--headless', result.stdout)
+
+    def test_help_exits_without_a_book(self):
+        result = self.run_launcher('--tts=qwen3', '--help')
+        self.assertIn('--ebook', result.stdout)
+        self.assertIn('--text', result.stdout)
+        self.assertIn('--tts=ENGINE', result.stdout)
+
+    def test_omitting_engine_keeps_xtts_default(self):
+        args = json.loads(self.run_launcher('--ebook', self.book).stdout)
+        self.assertEqual(args[args.index('--tts_engine') + 1], 'xtts')
 
 
 class ExternalAdapterTests(unittest.TestCase):

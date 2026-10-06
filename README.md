@@ -153,16 +153,21 @@ https://github.com/user-attachments/assets/81c4baad-117e-4db5-ac86-efc2b7fea921
 With `--split_by_chapter` (enabled by `run.sh`), each completed book chapter is
 exported immediately, so you can listen while later chapters are still being
 converted. Output names include the book name, chapter number, and chapter title,
-with a matching `.vtt` subtitle file. `bash run.sh BOOK_FILE` saves these beside
+with a matching `.vtt` subtitle file. `bash run.sh --ebook BOOK_FILE` saves these beside
 the source book, or in `OUTPUT_DIR` when set. Rerun the same command after an
 interruption to resume automatically; unchanged completed exports are reused.
 
-Choose an engine with `bash run.sh BOOK_FILE TTS_ENGINE [options]`, for example
-`bash run.sh book.epub bark --chapter "序言"`. Omitting the engine uses XTTS.
-The existing `bash run.sh book.epub --tts_engine bark` syntax also works.
+Choose an engine with `bash run.sh --ebook BOOK_FILE --tts=ENGINE [options]`,
+for example `bash run.sh --ebook book.epub --tts=bark --chapter "序言"`.
+For literal text, use `bash run.sh --text "五千年的文明。" --tts=cosyvoice`;
+text files use `--ebook book.txt`. Raw-text output defaults to the current
+directory. `--output_dir DIR` overrides `OUTPUT_DIR` and the default location.
+`--tts ENGINE`, `--tts_engine ENGINE` and the older `BOOK_FILE [TTS_ENGINE]`
+syntax also work. Omitting the engine uses XTTS.
 Automatic resume records are separate for each engine. Supported engine names
 are listed by `bash run.sh --help`; Chinese availability depends on the selected
-engine/model. CosyVoice, Qwen3-TTS, and IndexTTS are not currently integrated.
+engine/model. CosyVoice, Qwen3-TTS, and IndexTTS use isolated local environments;
+see [external TTS usage](docs/external-tts.md) for setup and voice options.
 
 Chinese text keeps complete sentences within the configured language length
 limit. Longer sentences split at clause punctuation first, with word boundaries

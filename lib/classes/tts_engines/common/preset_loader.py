@@ -9,6 +9,14 @@ def load_engine_presets(engine:str)->Dict[str, Any]:
     with _lock:
         if engine in _presets_cache:
             return _presets_cache[engine]
+        from lib.external_tts import EXTERNAL_ENGINES
+        if engine in EXTERNAL_ENGINES:
+            config = EXTERNAL_ENGINES[engine]
+            _presets_cache[engine] = {'internal': {
+                'lang': 'multi', 'repo': '', 'sub': '', 'voice': None,
+                'files': list(config['required']), 'samplerate': config['samplerate'],
+            }}
+            return _presets_cache[engine]
         try:
             module = importlib.import_module(f"lib.classes.tts_engines.presets.{engine}_presets")
         except Exception as e:

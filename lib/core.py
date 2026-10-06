@@ -3000,6 +3000,10 @@ def convert_chapters2audio(session_id:str)->bool:
         # every exit that is not a completed conversion drops the engine and evicts
         # its models: there are ten early `return False` paths in here, so a finally
         # is the only way to cover them all.
+        if tts_manager is not None:
+            close = getattr(getattr(tts_manager, 'engine', None), 'close', None)
+            if close is not None:
+                close()
         if not conversion:
             unload_tts_manager(tts_manager)
 
@@ -3824,6 +3828,8 @@ def convert_ebook(args:dict)->tuple:
             session['custom_model'] =  args['custom_model']
             session['fine_tuned'] = str(args['fine_tuned'])
             session['voice'] = args.get('voice', None)
+            session['tts_speaker'] = args.get('speaker')
+            session['tts_model_dir'] = args.get('tts_model_dir')
             session['xtts_temperature'] =  float(args['xtts_temperature'])
             session['xtts_length_penalty'] = float(args['xtts_length_penalty'])
             session['xtts_num_beams'] = int(args['xtts_num_beams'])

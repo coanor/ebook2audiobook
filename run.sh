@@ -4,11 +4,13 @@ set -euo pipefail
 if [[ $# -eq 0 || "$1" == "--help" || "$1" == "-h" ]]; then
   echo 'Usage: bash run.sh BOOK_FILE [TTS_ENGINE] [additional options]'
   echo 'TTS_ENGINE defaults to xtts. You can also pass --tts_engine ENGINE.'
-  echo 'Available: xtts, bark, piper, tortoise, vits, fairseq, glowtts, tacotron, yourtts.'
+  echo 'Available: xtts, cosyvoice, qwen3, indextts, bark, piper, tortoise, vits, fairseq, glowtts, tacotron, yourtts.'
+  echo 'Qwen3 uses --speaker Uncle_Fu by default; CosyVoice and IndexTTS accept --voice reference.wav.'
   echo 'Output defaults to the book directory. Set OUTPUT_DIR to use a shared folder.'
   echo 'Each completed book chapter is exported immediately; rerun the same command to resume.'
   echo 'Example: bash run.sh "/mnt/d/ai/books/jinrong.epub"'
   echo 'Example: bash run.sh "/mnt/d/ai/books/jinrong.epub" bark --chapter "序言"'
+  echo 'Example: bash run.sh "/mnt/d/ai/books/jinrong.epub" qwen3 --speaker Uncle_Fu --chapter "序言"'
   if [[ $# -eq 0 ]]; then
     exit 2
   fi
@@ -31,7 +33,7 @@ if [[ $# -gt 0 && "$1" != -* ]]; then
   shift
 fi
 case "$tts_engine" in
-  xtts|bark|piper|tortoise|vits|fairseq|glowtts|tacotron|yourtts) ;;
+  xtts|cosyvoice|qwen3|indextts|bark|piper|tortoise|vits|fairseq|glowtts|tacotron|yourtts) ;;
   *)
     printf 'Unsupported TTS engine: %s\n' "$tts_engine" >&2
     echo 'Use bash run.sh --help to see available engines.' >&2
@@ -54,4 +56,4 @@ exec "$repo_dir/start-local.sh" --headless \
   "$@"
 
 # Additional options: --voice "/path/to/reference.wav", --new_session,
-# --output_format wav, or --tts_engine bark / piper.
+# --output_format wav, --speaker Vivian (qwen3), or --tts_model_dir /path/model.

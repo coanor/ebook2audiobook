@@ -269,6 +269,10 @@ Keys may be absolute paths or basenames. Example:
 Default is set in ./lib/conf.py if not present. Fall back to CPU if CUDA or MPS is not available.''')
     headless_optional_group.add_argument(cli_options[13], type=str, default=TTS_ENGINES['XTTS'], choices=tts_engine_list_keys+tts_engine_list_values, help=f'''Preferred TTS engine (available are: {tts_engine_list_keys+tts_engine_list_values}.
 Default depends on the selected language. The tts engine should be compatible with the chosen language''')
+    headless_optional_group.add_argument('--speaker', type=str, default=None,
+                                        help='Qwen3 CustomVoice speaker; defaults to Uncle_Fu. Example: --speaker Vivian.')
+    headless_optional_group.add_argument('--tts_model_dir', type=str, default=None,
+                                        help='Local model directory for cosyvoice, qwen3, or indextts. Defaults to the shared downloaded models.')
     headless_optional_group.add_argument(cli_options[14], type=str, default=None, help='Path to the custom model zip file cntaining mandatory model files. Please refer to ./lib/models.py')
     headless_optional_group.add_argument(cli_options[15], type=str, default=default_fine_tuned, help='Fine tuned model path. Default is builtin model.')
     headless_optional_group.add_argument(cli_options[16], type=str, default=default_output_format, help=f'Output audio format. Default is {default_output_format} set in ./lib/conf.py')
@@ -311,6 +315,23 @@ Default to config.json model.""")
              sys.exit(1)
 
     args = vars(parser.parse_args())
+    selected_engine = TTS_ENGINES.get(args['tts_engine'], args['tts_engine'])
+    from lib.external_tts import EXTERNAL_ENGINES, QWEN_SPEAKERS
+    if args['speaker'] is not None and selected_engine != 'qwen3':
+        parser.error('--speaker is supported only by qwen3 CustomVoice')
+    if selected_engine == 'qwen3':
+        if args.get('voice') or args.get('voice_map'):
+            parser.error('Qwen3 CustomVoice uses --speaker; it cannot clone a --voice recording')
+        names = {name.lower(): name for name in QWEN_SPEAKERS}
+        if args['speaker'] and args['speaker'].lower() not in names:
+            parser.error(f'Unknown Qwen3 speaker; choose one of: {", ".join(QWEN_SPEAKERS)}')
+        args['speaker'] = names.get((args['speaker'] or 'Uncle_Fu').lower())
+    if args['tts_model_dir']:
+        if selected_engine not in EXTERNAL_ENGINES:
+            parser.error('--tts_model_dir is supported only by cosyvoice, qwen3, and indextts')
+        args['tts_model_dir'] = str(Path(args['tts_model_dir']).resolve())
+        if not Path(args['tts_model_dir']).is_dir():
+            parser.error('--tts_model_dir must name an existing model directory')
     if args['new_session'] and (args.get('session') or args.get('workflow')):
         parser.error('--new_session cannot be combined with --session or --workflow')
     if args['new_session'] and not (args.get('headless') and args.get('ebook')):
@@ -415,7 +436,8 @@ Default to config.json model.""")
                         args['ebook'], tmp_dir, process_name, language, translation,
                         explicit_session=args.get('session'), new_session=args['new_session'],
                         chapter=args['chapter_selection']['key'] if args['chapter_selection'] else None,
-                        engine=TTS_ENGINES.get(args['tts_engine'], args['tts_engine'])
+                        engine=TTS_ENGINES.get(args['tts_engine'], args['tts_engine']),
+                        speaker=args.get('speaker'), model_dir=args.get('tts_model_dir')
                     )
                 except (OSError, ValueError) as e:
                     print(f'Error selecting ebook session: {e}')

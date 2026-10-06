@@ -17,6 +17,7 @@ if [[ ! -x "$runtime_dir/python_env/bin/python" ]]; then
   exit 1
 fi
 runtime_dir="$(cd -- "$runtime_dir" && pwd)"
+export TXT2VOICE_RUNTIME_DIR="$runtime_dir"
 
 user_home="${HOME:?HOME is not set}"
 calibre_dir="$user_home/.local/calibre-bin/calibre"

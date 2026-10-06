@@ -10,6 +10,15 @@ from lib.classes.cli_session import select_book_session
 
 
 class RememberedBookSessionTests(unittest.TestCase):
+    def test_external_speakers_and_model_directories_get_separate_progress(self):
+        default, _ = self.select(engine='qwen3', speaker='Uncle_Fu')
+        other, reused = self.select(engine='qwen3', speaker='Vivian')
+        self.assertFalse(reused)
+        self.assertNotEqual(default, other)
+        self.assertEqual(self.select(engine='qwen3', speaker='uncle_fu'), (default, True))
+        custom, _ = self.select(engine='qwen3', speaker='Uncle_Fu', model_dir=self.root / 'custom')
+        self.assertNotIn(custom, (default, other))
+
     def test_engine_switches_have_separate_progress_and_normalize_names(self):
         xtts, _ = self.select()
         bark, reused = self.select(engine='bark')

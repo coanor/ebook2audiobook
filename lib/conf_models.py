@@ -1,5 +1,6 @@
 import os, re
 from lib.conf import tts_dir, voices_dir
+from lib.external_tts import EXTERNAL_ENGINES, QWEN_SPEAKERS
 
 loaded_tts = {}
 xtts_builtin_speakers_list = {}
@@ -15,6 +16,7 @@ TTS_ENGINES = {
     "TACOTRON": "tacotron",
     "YOURTTS": "yourtts"
 }
+TTS_ENGINES.update({config['label']: engine for engine, config in EXTERNAL_ENGINES.items()})
 
 TTS_VOICE_CONVERSION = {
     "freevc24": {"path": "voice_conversion_models/multilingual/vctk/freevc24", "samplerate": 24000},
@@ -287,3 +289,11 @@ default_engine_settings = {
         "rating": {"VRAM": 1, "CPU": 5, "RAM": 1, "Realism": 2}
     }
 }
+
+for engine, config in EXTERNAL_ENGINES.items():
+    default_engine_settings[engine] = {
+        'languages': config['languages'], 'samplerate': config['samplerate'],
+        'files': list(config['required']), 'voice': None,
+        'voices': {name: name for name in QWEN_SPEAKERS} if engine == 'qwen3' else {},
+        'rating': {'VRAM': 8, 'CPU': 2, 'RAM': 16, 'Realism': 5},
+    }

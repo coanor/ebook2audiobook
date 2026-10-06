@@ -10,6 +10,15 @@ from lib.classes.cli_session import select_book_session
 
 
 class RememberedBookSessionTests(unittest.TestCase):
+    def test_nested_chapter_scope_does_not_resume_old_part_sample(self):
+        old, _ = self.select(chapter='part.xhtml#')
+        nested, reused = self.select(chapter='part.xhtml#', chapter_scope='toc-subtree')
+        self.assertFalse(reused)
+        self.assertNotEqual(old, nested)
+        self.assertEqual(self.select(chapter='part.xhtml#', chapter_scope='toc-subtree'),
+                         (nested, True))
+        self.assertEqual(self.select(chapter='part.xhtml#'), (old, True))
+
     def test_external_speakers_and_model_directories_get_separate_progress(self):
         default, _ = self.select(engine='qwen3', speaker='Uncle_Fu')
         other, reused = self.select(engine='qwen3', speaker='Vivian')

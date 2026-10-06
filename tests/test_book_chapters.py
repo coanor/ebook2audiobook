@@ -24,6 +24,79 @@ def block(identifier, text, chapter, keep=True):
 
 
 class ChapterMappingTests(unittest.TestCase):
+    def test_stale_parent_anchor_uses_its_heading_before_nested_chapter(self):
+        book = epub.EpubBook()
+        doc = document(book, 'part.xhtml', '<h1>第一篇  阅读的层次</h1>'
+                       '<h2 id="one">第一章</h2><p>Chapter body.</p>')
+        book.spine = [doc]
+        book.toc = [(epub.Section('第一篇 阅读的层次', 'part.xhtml#missing'),
+                     [epub.Link('part.xhtml#one', '第一章', 'one')])]
+        items = list(chapter_documents(book, include_nested=True))
+        items = [(doc, chapter) for doc, chapter in items
+                 if BeautifulSoup(doc.get_content(), 'html.parser').body.get_text(strip=True)]
+        self.assertEqual([chapter['title'] for _, chapter in items],
+                         ['第一篇 阅读的层次', '第一章'])
+        self.assertNotIn('Chapter body.', BeautifulSoup(items[0][0].get_content(), 'html.parser').get_text())
+        self.assertIn('Chapter body.', BeautifulSoup(items[1][0].get_content(), 'html.parser').get_text())
+
+    def test_nested_selection_keeps_its_subsections_and_excludes_sibling_chapters(self):
+        book = epub.EpubBook()
+        doc = document(book, 'part.xhtml', '<h1 id="part">上篇</h1>'
+                       '<h2 id="one">第一章</h2><p>First chapter.</p>'
+                       '<h3 id="section">第一节</h3><p>First subsection.</p>'
+                       '<h2 id="two">第二章</h2><p>Second chapter.</p>')
+        book.spine = [doc]
+        book.toc = [(epub.Section('上篇', 'part.xhtml#part'), [
+            (epub.Section('第一章', 'part.xhtml#one'),
+             [epub.Link('part.xhtml#section', '第一节', 'section')]),
+            epub.Link('part.xhtml#two', '第二章', 'two'),
+        ])]
+        items = list(chapter_documents(book, include_nested=True))
+        catalog = chapter_catalog(items)
+        self.assertEqual([chapter['title'] for chapter in catalog],
+                         ['上篇', '第一章', '第一节', '第二章'])
+        selected = select_chapter(catalog, '第一章')
+        text = ' '.join(BeautifulSoup(doc.get_content(), 'html.parser').get_text()
+                        for doc, chapter in items
+                        if chapter['key'] == selected['key']
+                        or selected['key'] in chapter.get('ancestors', []))
+        self.assertIn('First chapter.', text)
+        self.assertIn('First subsection.', text)
+        self.assertNotIn('Second chapter.', text)
+        self.assertEqual(len(chapter_catalog(chapter_documents(book))), 1)
+
+    def test_get_blocks_selects_nested_chapter_and_groups_its_subsections(self):
+        import zipfile
+        import lib.core as core
+
+        book = epub.EpubBook()
+        part = document(book, 'part.xhtml', '<h1>上篇</h1>')
+        one = document(book, 'one.xhtml', '<h2>第一章</h2>')
+        section = document(book, 'section.xhtml', '<h3>第一节</h3>')
+        two = document(book, 'two.xhtml', '<h2>第二章</h2>')
+        book.spine = [(item.id, 'yes') for item in (part, one, section, two)]
+        book.toc = [(epub.Section('上篇', 'part.xhtml'), [
+            (epub.Section('第一章', 'one.xhtml'),
+             [epub.Link('section.xhtml', '第一节', 'section')]),
+            epub.Link('two.xhtml', '第二章', 'two'),
+        ])]
+        selected = {'key': 'one.xhtml#', 'title': '第一章', 'number': 2, 'occurrence': 1}
+        with tempfile.TemporaryDirectory() as folder:
+            archive = Path(folder) / 'book.epub'
+            with zipfile.ZipFile(archive, 'w'):
+                pass
+            session = dict(id='nested-test', cancellation_requested=False, language='zho',
+                           language_iso1='zh', tts_engine='xtts', output_split=True,
+                           output_split_hours='chapters', chapter_selection=selected,
+                           epub_path=str(archive))
+            with patch.object(core, 'context', SimpleNamespace(get_session=lambda _: session)), \
+                    patch.object(core, 'get_ebook_title', return_value='Book'), \
+                    patch.object(core, 'filter_blocks', side_effect=lambda _, i, doc, *args: doc.file_name):
+                blocks = core.get_blocks('nested-test', book)
+            self.assertEqual(blocks, ['one.xhtml', 'section.xhtml'])
+            self.assertEqual([chapter['title'] for chapter in session['book_chapter_labels']],
+                             ['第一章', '第一章'])
+
     def test_book_title_wrapper_exposes_real_chapters_without_expanding_subsections(self):
         book = epub.EpubBook()
         book.set_title('旧唐书')

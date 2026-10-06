@@ -348,7 +348,7 @@ Default to config.json model.""")
         from lib.classes.book_chapters import chapter_documents, chapter_catalog, select_chapter
         try:
             book = epub.read_epub(args['ebook'], {'ignore_ncx': False})
-            catalog = chapter_catalog(chapter_documents(book))
+            catalog = chapter_catalog(chapter_documents(book, include_nested=True))
             if not catalog:
                 raise ValueError('No readable EPUB chapters found')
             if args['list_chapters']:
@@ -436,6 +436,7 @@ Default to config.json model.""")
                         args['ebook'], tmp_dir, process_name, language, translation,
                         explicit_session=args.get('session'), new_session=args['new_session'],
                         chapter=args['chapter_selection']['key'] if args['chapter_selection'] else None,
+                        chapter_scope='toc-subtree' if args['chapter_selection'] else None,
                         engine=TTS_ENGINES.get(args['tts_engine'], args['tts_engine']),
                         speaker=args.get('speaker'), model_dir=args.get('tts_model_dir')
                     )

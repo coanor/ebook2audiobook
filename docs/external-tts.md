@@ -15,6 +15,19 @@ chapter filename rules. Rerunning the same command resumes automatically.
 `--chapter "序言"` or `--chapter 3` converts a single chapter in a separate
 sample session. `--output_format wav` changes the default M4B format.
 
+List selectable entries, including chapters nested under a part, before choosing
+a number. Numbers refer to this list, not the chapter numbers printed in the book.
+Selecting a title includes its own subsections and stops before sibling chapters:
+
+```bash
+bash run.sh "/mnt/d/ai/books/如何阅读一本书.epub" cosyvoice --list_chapters
+bash run.sh "/mnt/d/ai/books/如何阅读一本书.epub" cosyvoice --chapter "第四章 阅读的第二个层次：检视阅读"
+bash run.sh "/mnt/d/ai/books/置身事内.epub" qwen3 --chapter "第四章 工业化中的政府角色"
+```
+
+Nested selections use a separate remembered session from older part samples.
+Existing full-book conversions keep their top-level chapter grouping.
+
 ## Voices
 
 Qwen3 uses the downloaded **1.7B CustomVoice** model and defaults to **Uncle_Fu**,

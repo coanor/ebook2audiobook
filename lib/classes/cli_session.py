@@ -22,7 +22,7 @@ def _cached_engine(process_dir):
 
 def select_book_session(ebook, tmp_dir, process_name, language, translation=None,
                         explicit_session=None, new_session=False, chapter=None, engine='xtts',
-                        speaker=None, model_dir=None):
+                        speaker=None, model_dir=None, chapter_scope=None):
     """Return (session ID, reused), adopting matching older caches when needed.
 
     The source path identifies a book; the content checksum is used only when
@@ -38,6 +38,8 @@ def select_book_session(ebook, tmp_dir, process_name, language, translation=None
         identity['engine'] = engine
     if chapter is not None:
         identity['chapter'] = chapter
+        if chapter_scope is not None:
+            identity['chapter_scope'] = chapter_scope
     if speaker is not None:
         identity['speaker'] = speaker.lower()
     if model_dir is not None:

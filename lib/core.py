@@ -1356,10 +1356,13 @@ INTO A NEW TRAINING MODEL. YOU CAN IMPROVE IT OR ASK TO A TRAINING MODEL EXPERT.
                 print(error)
                 return []
             split_by_chapter = session.get('output_split') and session.get('output_split_hours') == 'chapters'
-            chapter_docs = list(chapter_documents(epubBook)) if split_by_chapter else [(doc, None) for doc in all_docs]
+            chapter_docs = (list(chapter_documents(epubBook, include_nested=bool(session.get('chapter_selection'))))
+                            if split_by_chapter else [(doc, None) for doc in all_docs])
             if session.get('chapter_selection'):
                 selected = select_chapter(chapter_catalog(chapter_docs), session['chapter_selection'])
-                chapter_docs = [(doc, chapter) for doc, chapter in chapter_docs if chapter['key'] == selected['key']]
+                chapter_docs = [(doc, selected) for doc, chapter in chapter_docs
+                                if chapter['key'] == selected['key']
+                                or selected['key'] in chapter.get('ancestors', [])]
             title = get_ebook_title(epubBook, all_docs)
             blocks = []
             chapter_labels = []

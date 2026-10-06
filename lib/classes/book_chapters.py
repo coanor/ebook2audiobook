@@ -1,4 +1,4 @@
-"""Map EPUB reading-order documents to the book's top-level TOC chapters."""
+"""Map EPUB reading-order documents to TOC chapters and nested selections."""
 
 import copy
 import posixpath
@@ -15,20 +15,27 @@ EXCLUDED_EPUB_TYPES = {
 }
 
 
-def _toc_entries(nodes, book_title=None):
+def _toc_entries(nodes, book_title=None, include_nested=False, ancestors=()):
     for node in nodes:
         if isinstance(node, tuple):
             parent, children = node
             if getattr(parent, 'href', None):
-                yield parent
+                yield parent, ancestors
                 # Some books nest every chapter below a single book-title
                 # wrapper. Expand that wrapper, while keeping its own content.
-                if children and str(parent.title).strip() == book_title:
-                    yield from _toc_entries(children, book_title)
+                if children and (include_nested or str(parent.title).strip() == book_title):
+                    yield from _toc_entries(children, book_title, include_nested,
+                                            (*ancestors, parent.href))
             else:
-                yield from _toc_entries(children, book_title)
+                yield from _toc_entries(children, book_title, include_nested, ancestors)
         elif getattr(node, 'href', None):
-            yield node
+            yield node, ancestors
+
+
+def _toc_key(href):
+    target = urlsplit(href)
+    name = posixpath.normpath(unquote(target.path))
+    return f'{name}#{unquote(target.fragment)}'
 
 
 def _document_slice(doc, soup, positions, start, end):
@@ -52,11 +59,12 @@ def _document_slice(doc, soup, positions, start, end):
     return segment
 
 
-def chapter_documents(book):
+def chapter_documents(book, include_nested=False):
     """Yield (document segment, chapter metadata) in spine order.
 
-    Nested TOC entries remain in their parent chapter. Without a TOC, each
-    spine document is a separate chapter. Content before the TOC is retained.
+    By default, nested TOC entries remain in their parent chapter. Selection
+    mode exposes every TOC boundary and its ancestors so a selected chapter
+    can retain its subsections. Without a TOC, each spine document is separate.
     """
     documents = []
     for item in book.spine:
@@ -68,15 +76,18 @@ def chapter_documents(book):
     targets = {}
     titles = book.get_metadata('DC', 'title')
     book_title = str(titles[0][0]).strip() if titles else None
-    for entry in _toc_entries(book.toc, book_title):
+    for entry, ancestors in _toc_entries(book.toc, book_title, include_nested):
         href = urlsplit(entry.href)
         name = posixpath.normpath(unquote(href.path))
         if href.scheme or name not in names:
             continue
         anchor = unquote(href.fragment)
-        targets.setdefault(name, []).append((anchor, {
+        chapter = {
             'key': f'{name}#{anchor}', 'title': str(entry.title),
-        }))
+        }
+        if include_nested:
+            chapter['ancestors'] = [_toc_key(href) for href in ancestors]
+        targets.setdefault(name, []).append((anchor, chapter))
 
     current = {'key': '__frontmatter__', 'title': 'Front matter'}
     for doc in documents:
@@ -99,8 +110,17 @@ def chapter_documents(book):
             element = soup.body.find(id=anchor) if anchor else soup.body
             if element is None:
                 element = soup.body.find(attrs={'name': anchor})
+            if element is None and include_nested:
+                # Some source EPUBs use stale fragments for a part whose first
+                # chapter has a valid anchor in the same file. Locate its
+                # unique heading instead of merging it with the child chapter.
+                title = ''.join(chapter['title'].split())
+                headings = [heading for heading in soup.body.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+                            if ''.join(heading.get_text().split()) == title]
+                if len(headings) == 1:
+                    element = headings[0]
             # Some EPUBs contain stale TOC fragments after splitting files.
-            # A sole top-level target still identifies the whole document.
+            # A sole target still identifies the whole document.
             if element is None and len(boundaries) == 1:
                 element = soup.body
             if element is None:

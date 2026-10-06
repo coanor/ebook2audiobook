@@ -10,6 +10,47 @@ from lib.classes.cli_session import select_book_session
 
 
 class RememberedBookSessionTests(unittest.TestCase):
+    def test_engine_switches_have_separate_progress_and_normalize_names(self):
+        xtts, _ = self.select()
+        bark, reused = self.select(engine='bark')
+        self.assertFalse(reused)
+        self.assertNotEqual(bark, xtts)
+        progress = self.cache / f'proc-{xtts}' / 'checkpoint'
+        progress.write_text('XTTS progress')
+        self.assertEqual(self.select(engine='BARK'), (bark, True))
+        self.assertEqual(self.select(engine='XTTS'), (xtts, True))
+        self.assertEqual(progress.read_text(), 'XTTS progress')
+        sample, _ = self.select(engine='bark', chapter='first.xhtml')
+        other_sample, _ = self.select(chapter='first.xhtml')
+        self.assertNotEqual(sample, other_sample)
+
+    def test_legacy_adoption_skips_other_engine_audio(self):
+        xtts, xtts_process = self.legacy_session(modified=1)
+        bark, bark_process = self.legacy_session(modified=2)
+        (xtts_process / '__saved_book.json').write_text(json.dumps({'tts_engine': 'xtts'}))
+        (bark_process / '__saved_book.json').write_text(json.dumps({'tts_engine': 'bark'}))
+        self.assertEqual(self.select(), (xtts, True))
+        selected_bark, reused = self.select(engine='bark')
+        self.assertFalse(reused)
+        self.assertNotIn(selected_bark, (xtts, bark))
+        self.assertTrue((bark_process / 'sentences.flac').exists())
+
+    def test_previously_shared_pointer_does_not_resume_wrong_engine(self):
+        old, process = self.legacy_session()
+        self.assertEqual(self.select(), (old, True))
+        (process / '__saved_book.json').write_text(json.dumps({'tts_engine': 'bark'}))
+        fresh, reused = self.select()
+        self.assertFalse(reused)
+        self.assertNotEqual(fresh, old)
+        self.assertTrue((process / 'sentences.flac').exists())
+        sample, _ = self.select(chapter='first.xhtml')
+        sample_process = self.cache / f'proc-{sample}' / hashlib.md5(b'book_sample').hexdigest()
+        sample_process.mkdir()
+        (sample_process / '__saved_book_sample.json').write_text(json.dumps({'tts_engine': 'bark'}))
+        fresh_sample, reused = self.select(chapter='first.xhtml')
+        self.assertFalse(reused)
+        self.assertNotEqual(fresh_sample, sample)
+
     def test_chapter_samples_have_separate_sessions_and_preserve_full_book_progress(self):
         legacy, process = self.legacy_session()
         self.assertEqual(self.select(), (legacy, True))

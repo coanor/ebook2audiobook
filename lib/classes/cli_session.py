@@ -8,8 +8,20 @@ import uuid
 from pathlib import Path
 
 
+def _cached_engine(process_dir):
+    for saved in process_dir.glob('__saved_*.json'):
+        try:
+            data = json.loads(saved.read_text(encoding='utf-8'))
+            engine = data.get('tts_engine') if isinstance(data, dict) else None
+            if isinstance(engine, str) and engine:
+                return engine.lower()
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 def select_book_session(ebook, tmp_dir, process_name, language, translation=None,
-                        explicit_session=None, new_session=False, chapter=None):
+                        explicit_session=None, new_session=False, chapter=None, engine='xtts'):
     """Return (session ID, reused), adopting matching older caches when needed.
 
     The source path identifies a book; the content checksum is used only when
@@ -19,6 +31,10 @@ def select_book_session(ebook, tmp_dir, process_name, language, translation=None
     source = Path(ebook).resolve()
     root = Path(tmp_dir)
     identity = {'ebook': str(source), 'language': language, 'translation': translation}
+    engine = engine.lower()
+    # Keep the old identity for XTTS so existing long conversions still resume.
+    if engine != 'xtts':
+        identity['engine'] = engine
     if chapter is not None:
         identity['chapter'] = chapter
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
@@ -37,7 +53,13 @@ def select_book_session(ebook, tmp_dir, process_name, language, translation=None
                 session_id = None
             if session_id and not (root / f'proc-{session_id}').is_dir():
                 session_id = None
-        if session_id is None and chapter is None:
+            if session_id:
+                cached_process_name = f'{process_name}_sample' if chapter is not None else process_name
+                process_key = hashlib.md5(cached_process_name.encode()).hexdigest()
+                cached_engine = _cached_engine(root / f'proc-{session_id}' / process_key)
+                if cached_engine and cached_engine != engine:
+                    session_id = None
+        if session_id is None and chapter is None and engine == 'xtts':
             # Pre-feature sessions have no index. Match the process directory
             # and original book checksum rather than guessing from a title.
             with source.open('rb') as file:
@@ -46,6 +68,9 @@ def select_book_session(ebook, tmp_dir, process_name, language, translation=None
             candidates = []
             for checksum in root.glob(f'proc-*/{process_key}/checksum'):
                 if checksum.read_text(encoding='utf-8').strip() == digest:
+                    cached_engine = _cached_engine(checksum.parent)
+                    if cached_engine and cached_engine != engine:
+                        continue
                     candidate = checksum.parent.parent.name.removeprefix('proc-')
                     try:
                         uuid.UUID(candidate)

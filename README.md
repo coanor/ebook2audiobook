@@ -157,6 +157,13 @@ with a matching `.vtt` subtitle file. `bash run.sh BOOK_FILE` saves these beside
 the source book, or in `OUTPUT_DIR` when set. Rerun the same command after an
 interruption to resume automatically; unchanged completed exports are reused.
 
+Choose an engine with `bash run.sh BOOK_FILE TTS_ENGINE [options]`, for example
+`bash run.sh book.epub bark --chapter "序言"`. Omitting the engine uses XTTS.
+The existing `bash run.sh book.epub --tts_engine bark` syntax also works.
+Automatic resume records are separate for each engine. Supported engine names
+are listed by `bash run.sh --help`; Chinese availability depends on the selected
+engine/model. CosyVoice, Qwen3-TTS, and IndexTTS are not currently integrated.
+
 Chinese text keeps complete sentences within the configured language length
 limit. Longer sentences split at clause punctuation first, with word boundaries
 as a fallback for unpunctuated text. On resume, Chinese sentence boundaries are

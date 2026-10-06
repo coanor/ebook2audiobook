@@ -2,10 +2,13 @@
 set -euo pipefail
 
 if [[ $# -eq 0 || "$1" == "--help" || "$1" == "-h" ]]; then
-  echo 'Usage: bash run.sh BOOK_FILE [additional options]'
+  echo 'Usage: bash run.sh BOOK_FILE [TTS_ENGINE] [additional options]'
+  echo 'TTS_ENGINE defaults to xtts. You can also pass --tts_engine ENGINE.'
+  echo 'Available: xtts, bark, piper, tortoise, vits, fairseq, glowtts, tacotron, yourtts.'
   echo 'Output defaults to the book directory. Set OUTPUT_DIR to use a shared folder.'
   echo 'Each completed book chapter is exported immediately; rerun the same command to resume.'
   echo 'Example: bash run.sh "/mnt/d/ai/books/jinrong.epub"'
+  echo 'Example: bash run.sh "/mnt/d/ai/books/jinrong.epub" bark --chapter "序言"'
   if [[ $# -eq 0 ]]; then
     exit 2
   fi
@@ -22,6 +25,20 @@ book_dir="$(cd -- "$(dirname -- "$1")" && pwd)"
 ebook_path="$book_dir/$(basename -- "$1")"
 shift
 
+tts_engine=xtts
+if [[ $# -gt 0 && "$1" != -* ]]; then
+  tts_engine="${1,,}"
+  shift
+fi
+case "$tts_engine" in
+  xtts|bark|piper|tortoise|vits|fairseq|glowtts|tacotron|yourtts) ;;
+  *)
+    printf 'Unsupported TTS engine: %s\n' "$tts_engine" >&2
+    echo 'Use bash run.sh --help to see available engines.' >&2
+    exit 2
+    ;;
+esac
+
 output_dir="${OUTPUT_DIR:-$book_dir}"
 mkdir -p -- "$output_dir"
 output_dir="$(cd -- "$output_dir" && pwd)"
@@ -30,7 +47,7 @@ exec "$repo_dir/start-local.sh" --headless \
   --ebook "$ebook_path" \
   --language zho \
   --device cuda \
-  --tts_engine xtts \
+  --tts_engine "$tts_engine" \
   --output_format m4b \
   --split_by_chapter \
   --output_dir "$output_dir" \

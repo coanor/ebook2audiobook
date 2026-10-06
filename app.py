@@ -414,7 +414,8 @@ Default to config.json model.""")
                     args['id'], reused = select_book_session(
                         args['ebook'], tmp_dir, process_name, language, translation,
                         explicit_session=args.get('session'), new_session=args['new_session'],
-                        chapter=args['chapter_selection']['key'] if args['chapter_selection'] else None
+                        chapter=args['chapter_selection']['key'] if args['chapter_selection'] else None,
+                        engine=TTS_ENGINES.get(args['tts_engine'], args['tts_engine'])
                     )
                 except (OSError, ValueError) as e:
                     print(f'Error selecting ebook session: {e}')

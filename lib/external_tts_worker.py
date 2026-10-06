@@ -75,6 +75,26 @@ def synthesize(engine, model, request):
     return rate
 
 
+def synthesize_batch(engine, model, requests):
+    import numpy as np
+    import soundfile as sf
+    if engine != 'qwen3' or not requests:
+        raise ValueError('Batched synthesis requires Qwen3 and nonempty requests.')
+    for request in requests:
+        Path(request['output']).unlink(missing_ok=True)
+    wavs, rate = model.generate_custom_voice(
+        text=[r['text'] for r in requests],
+        language=[r['language'] for r in requests],
+        speaker=[r['speaker'] for r in requests])
+    if len(wavs) != len(requests):
+        raise RuntimeError('Qwen3 returned a different number of waveforms than requested.')
+    if any(not np.asarray(wav).size or not np.isfinite(wav).all() for wav in wavs):
+        raise RuntimeError('Qwen3 returned empty or invalid audio in the batch.')
+    for request, wav in zip(requests, wavs):
+        sf.write(request['output'], wav, rate, subtype='FLOAT')
+    return rate
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--engine', choices=EXTERNAL_ENGINES, required=True)
@@ -117,7 +137,11 @@ def main():
         reply(ok=True, samplerate=EXTERNAL_ENGINES[args.engine]['samplerate'])
         for line in sys.stdin:
             try:
-                rate = synthesize(args.engine, model, json.loads(line))
+                request = json.loads(line)
+                if 'batch' in request:
+                    rate = synthesize_batch(args.engine, model, request['batch'])
+                else:
+                    rate = synthesize(args.engine, model, request)
                 reply(ok=True, samplerate=rate)
             except Exception as error:
                 traceback.print_exc()

@@ -30,7 +30,7 @@ cli_options = [
     '--speed', '--enable_text_splitting', '--text_temp',
     '--waveform_temp', '--output_dir', 
     '--abs_url', '--abs_api_token', '--abs_library',
-    '--version', '--workflow', '--docker_device', '--help', '--split_by_chapter', '--new_session', '--chapter', '--list_chapters', '--speaker', '--tts_model_dir', '--tts'
+    '--version', '--workflow', '--docker_device', '--help', '--split_by_chapter', '--new_session', '--chapter', '--list_chapters', '--speaker', '--tts_model_dir', '--tts', '--batch_size'
 ]
 
 workflow_id = 'ba800d22-ee51-11ef-ac34-d4ae52cfd9ce'

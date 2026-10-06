@@ -7,6 +7,7 @@ usage() {
   echo 'ENGINE defaults to xtts. --tts ENGINE and --tts_engine ENGINE also work.'
   echo 'Available: xtts, cosyvoice, qwen3, indextts, bark, piper, tortoise, vits, fairseq, glowtts, tacotron, yourtts.'
   echo 'Qwen3 uses --speaker Uncle_Fu by default; CosyVoice and IndexTTS accept --voice reference.wav.'
+  echo 'Qwen3 batches 4 sentences on CUDA (1 on CPU); set --batch_size 1..16 to change it.'
   echo 'Output defaults to the book directory, or the current directory for raw text.'
   echo 'Use --output_dir DIR or OUTPUT_DIR to choose another output directory.'
   echo 'Each completed book chapter is exported immediately; rerun the same command to resume.'

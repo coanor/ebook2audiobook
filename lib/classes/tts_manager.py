@@ -22,3 +22,6 @@ class TTSManager:
 
     def convert_sentence2audio(self, sentence_file:str, sentence:str, **kwargs)->tuple:
         return self.engine.convert(sentence_file, sentence, **kwargs)
+
+    def convert_sentences2audio(self, sentences:list, **kwargs)->tuple:
+        return self.engine.convert_batch(sentences, **kwargs)

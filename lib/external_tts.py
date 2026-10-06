@@ -38,6 +38,15 @@ def engine_paths(engine, runtime_dir, model_dir=None):
     }
 
 
+def qwen_batch_size(session):
+    size = session.get('tts_batch_size')
+    if size is None:
+        size = 4 if session.get('device') == 'cuda' else 1
+    if not isinstance(size, int) or not 1 <= size <= 16:
+        raise ValueError('Qwen3 --batch_size must be an integer from 1 to 16.')
+    return size
+
+
 class EngineWorker:
     """Keep one model loaded, exchange JSON requests, and stop on close or exit."""
 
@@ -66,11 +75,16 @@ class EngineWorker:
         return response
 
     def synthesize(self, text, output, voice, language, speaker):
+        return self._request({'text': text, 'output': os.fspath(output),
+                              'voice': voice, 'language': language, 'speaker': speaker})
+
+    def synthesize_batch(self, requests):
+        return self._request({'batch': requests})
+
+    def _request(self, request):
         with self.lock:
             try:
-                self.process.stdin.write(json.dumps({'text': text, 'output': os.fspath(output),
-                                                     'voice': voice, 'language': language,
-                                                     'speaker': speaker}, ensure_ascii=False) + '\n')
+                self.process.stdin.write(json.dumps(request, ensure_ascii=False) + '\n')
                 self.process.stdin.flush()
                 return self._receive()
             except BaseException:

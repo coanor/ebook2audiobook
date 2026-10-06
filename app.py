@@ -273,6 +273,8 @@ Default depends on the selected language. The tts engine should be compatible wi
                                         help='Qwen3 CustomVoice speaker; defaults to Uncle_Fu. Example: --speaker Vivian.')
     headless_optional_group.add_argument('--tts_model_dir', type=str, default=None,
                                         help='Local model directory for cosyvoice, qwen3, or indextts. Defaults to the shared downloaded models.')
+    headless_optional_group.add_argument('--batch_size', type=int, choices=range(1, 17), default=None,
+                                        help='Qwen3 sentences per batch: default 4 on CUDA, 1 on CPU. Use 1 to disable batching.')
     headless_optional_group.add_argument(cli_options[14], type=str, default=None, help='Path to the custom model zip file cntaining mandatory model files. Please refer to ./lib/models.py')
     headless_optional_group.add_argument(cli_options[15], type=str, default=default_fine_tuned, help='Fine tuned model path. Default is builtin model.')
     headless_optional_group.add_argument(cli_options[16], type=str, default=default_output_format, help=f'Output audio format. Default is {default_output_format} set in ./lib/conf.py')
@@ -319,6 +321,8 @@ Default to config.json model.""")
     from lib.external_tts import EXTERNAL_ENGINES, QWEN_SPEAKERS
     if args['speaker'] is not None and selected_engine != 'qwen3':
         parser.error('--speaker is supported only by qwen3 CustomVoice')
+    if args['batch_size'] is not None and selected_engine != 'qwen3':
+        parser.error('--batch_size is supported only by qwen3')
     if selected_engine == 'qwen3':
         if args.get('voice') or args.get('voice_map'):
             parser.error('Qwen3 CustomVoice uses --speaker; it cannot clone a --voice recording')

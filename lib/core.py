@@ -2822,6 +2822,11 @@ def convert_chapters2audio(session_id:str)->bool:
             return False
         print(f'*********** Session: {session_id} **************\n{session_info}')
         tts_manager = TTSManager(session)
+        use_batches = session.get('tts_engine') == 'qwen3'
+        if use_batches:
+            from lib.external_tts import qwen_batch_size
+            batch_size = qwen_batch_size(session)
+            print(f'Qwen3 batch size: {batch_size}')
         blocks_current = session['blocks_current']
         blocks = blocks_current['blocks']
         block_resume = blocks_current['block_resume']
@@ -2930,7 +2935,7 @@ def convert_chapters2audio(session_id:str)->bool:
                     show_alert(session_id, {'type': 'info', 'msg': f'Chapter {ch_num} (block {x}) — changed, reconverting'})
                     _reset_chapter_file(block_id)
                 elif x == block_resume and not block_changed:
-                    if sentence_resume == 0 and os.path.isdir(block_dir):
+                    if sentence_resume == 0 and os.path.isdir(block_dir) and not (use_batches and block_ref):
                         shutil.rmtree(block_dir)
                     start_sentence = sentence_resume
                 show_alert(session_id, {'type': 'info', 'msg': f'Chapter {ch_num} (block {x}) containing {block_len} sentences…'})
@@ -2941,6 +2946,20 @@ def convert_chapters2audio(session_id:str)->bool:
                 save_db_stamp(session_id)
                 converted = False
                 block_voice = block.get('voice') or session.get('voice')
+                generated_indices = set()
+
+                def cached_sentence(index):
+                    if index in generated_indices:
+                        return True
+                    if not block_ref or block_changed:
+                        return False
+                    import soundfile as sf
+                    path = os.path.join(block_dir, f'{index}.{default_audio_proc_format}')
+                    try:
+                        return sf.info(path).frames > 0
+                    except (OSError, RuntimeError):
+                        return False
+
                 for j in range(block_len):
                     if session['cancellation_requested']:
                         msg = 'Conversion Cancelled'
@@ -2951,7 +2970,36 @@ def convert_chapters2audio(session_id:str)->bool:
                             if j == start_sentence and start_sentence > 0:
                                 show_alert(session_id, {'type': 'info', 'msg': f'*** Resuming from sentence {global_sent} ***'})
                             sentence_file = os.path.join(block_dir, f'{j}.{default_audio_proc_format}')
-                            run, error = tts_manager.convert_sentence2audio(sentence_file, sentence, block_voice=block_voice)
+                            if use_batches:
+                                run, error = True, None
+                                if not cached_sentence(j):
+                                    indices = []
+                                    for index in range(j, block_len):
+                                        if index in valid_idx and not cached_sentence(index):
+                                            indices.append(index)
+                                            if len(indices) == batch_size:
+                                                break
+                                    items = [(os.path.join(block_dir, f'{index}.{default_audio_proc_format}'),
+                                              sentences[index].strip()) for index in indices]
+                                    # Save the text baseline before publishing a batch. A killed run
+                                    # may leave complete files ahead of the persisted progress index.
+                                    if not baseline_initialized:
+                                        session['blocks_saved'] = copy.deepcopy(blocks_current)
+                                        save_json_blocks(session_id, 'blocks_saved')
+                                        baseline_initialized = True
+                                    print(f'Generating Qwen3 batch: {len(items)} sentences (block {x}, sentence {j})')
+                                    batch_started = time.monotonic()
+                                    run, error = tts_manager.convert_sentences2audio(items, block_voice=block_voice)
+                                    if run:
+                                        generated_indices.update(indices)
+                                        import soundfile as sf
+                                        elapsed = time.monotonic() - batch_started
+                                        duration = sum(sf.info(path).duration for path, _ in items)
+                                        ratio = elapsed / duration if duration > 0 else 0
+                                        print(f'Qwen3 batch finished: {len(items)} sentences, {elapsed:.1f}s elapsed, '
+                                              f'{duration:.1f}s audio, RTF {ratio:.2f}')
+                            else:
+                                run, error = tts_manager.convert_sentence2audio(sentence_file, sentence, block_voice=block_voice)
                             if not run:
                                 show_alert(session_id, {'type': 'warning', 'msg': error})
                                 return False
@@ -3833,6 +3881,7 @@ def convert_ebook(args:dict)->tuple:
             session['voice'] = args.get('voice', None)
             session['tts_speaker'] = args.get('speaker')
             session['tts_model_dir'] = args.get('tts_model_dir')
+            session['tts_batch_size'] = args.get('batch_size')
             session['xtts_temperature'] =  float(args['xtts_temperature'])
             session['xtts_length_penalty'] = float(args['xtts_length_penalty'])
             session['xtts_num_beams'] = int(args['xtts_num_beams'])

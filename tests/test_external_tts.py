@@ -32,6 +32,13 @@ class WorkerProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'Missing tokenizer'):
             self.worker("import json; print(json.dumps({'ok':False,'error':'Missing tokenizer'}))")
 
+    def test_batch_protocol_preserves_unicode_and_order(self):
+        worker = self.worker("import sys,json\nprint(json.dumps({'ok':True}))\n"
+                             "for line in sys.stdin:\n r=json.loads(line); r['ok']=True; print(json.dumps(r))")
+        requests = [dict(text=text, output=f'/tmp/{i}.wav', language='Chinese', speaker='Uncle_Fu')
+                    for i, text in enumerate(['第一句。', '第二句。'])]
+        self.assertEqual(worker.synthesize_batch(requests)['batch'], requests)
+
     def test_synthesis_failure_closes_worker(self):
         worker = self.worker("import json,sys\nprint(json.dumps({'ok':True}))\n"
                              "for line in sys.stdin: print(json.dumps({'ok':False,'error':'GPU out of memory'}))")
@@ -46,6 +53,29 @@ class WorkerProtocolTests(unittest.TestCase):
 
 
 class ModelOutputTests(unittest.TestCase):
+    def test_qwen_model_receives_lists_and_writes_distinct_sentence_audio(self):
+        import numpy as np
+        import soundfile as sf
+        from lib.external_tts_worker import synthesize_batch
+        from unittest.mock import Mock
+
+        model = Mock()
+        model.generate_custom_voice.return_value = ([np.ones(100) * .1, np.ones(200) * .2], 24000)
+        with tempfile.TemporaryDirectory() as folder:
+            requests = [dict(text=text, output=str(Path(folder) / f'{i}.wav'),
+                             language='Chinese', speaker='Uncle_Fu')
+                        for i, text in enumerate(['第一句。', '第二句。'])]
+            self.assertEqual(synthesize_batch('qwen3', model, requests), 24000)
+            model.generate_custom_voice.assert_called_once_with(
+                text=['第一句。', '第二句。'], language=['Chinese', 'Chinese'], speaker=['Uncle_Fu', 'Uncle_Fu'])
+            self.assertEqual([sf.info(r['output']).frames for r in requests], [100, 200])
+            # A malformed response cannot leave stale or partially published batch WAVs.
+            for wavs in ([np.ones(10)], [np.ones(10), np.array([np.nan])]):
+                model.generate_custom_voice.return_value = (wavs, 24000)
+                with self.assertRaises(RuntimeError):
+                    synthesize_batch('qwen3', model, requests)
+                self.assertFalse(any(Path(r['output']).exists() for r in requests))
+
     def test_empty_index_generation_cannot_reuse_previous_sentence_audio(self):
         import numpy as np
         import soundfile as sf
@@ -146,6 +176,19 @@ class LauncherTests(unittest.TestCase):
         self.assertNotEqual(invalid.returncode, 0)
         self.assertIn('invalid choice', invalid.stderr)
 
+    def test_batch_size_is_forwarded_and_invalid_sizes_are_rejected(self):
+        args = json.loads(self.run_launcher('--tts=qwen3', '--text', '第一句。第二句。', '--batch_size', '2').stdout)
+        self.assertEqual(args[args.index('--batch_size') + 1], '2')
+        app = Path(__file__).resolve().parents[1] / 'app.py'
+        for size in ('0', '17', 'four'):
+            result = subprocess.run([sys.executable, str(app), '--tts=qwen3',
+                                     '--batch_size', size, '--help'], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+        result = subprocess.run([sys.executable, str(app), '--tts=cosyvoice', '--batch_size', '2',
+                                 '--headless', '--text', '测试。'], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('--batch_size is supported only by qwen3', result.stderr)
+
     def test_invalid_inputs_fail_before_launcher_is_called(self):
         for options in [(), ('--tts=qwen3',), ('--ebook',), ('--text',),
                         ('--tts',), ('--ebook', self.book, '--tts'),
@@ -206,6 +249,11 @@ class ExternalAdapterTests(unittest.TestCase):
                 self.requests.append((text, voice, language, speaker))
                 sf.write(output, np.ones(1600, dtype=np.float32) * .1, 16000)
 
+            def synthesize_batch(inner, requests):
+                for request in requests:
+                    inner.synthesize(request['text'], request['output'], None,
+                                     request['language'], request['speaker'])
+
             def close(inner):
                 inner.closed = True
 
@@ -249,6 +297,30 @@ class ExternalAdapterTests(unittest.TestCase):
     def test_qwen_reference_audio_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'cannot clone'):
             self.adapter('qwen3', voice='reference.wav')
+
+    def test_batch_preserves_pauses_order_and_sentence_cache(self):
+        import soundfile as sf
+        adapter = self.adapter('qwen3', tts_batch_size=4)
+        items = [(self.process / '0.flac', '第一句。[pause:0.5]第二句。'),
+                 (self.process / '1.flac', '[pause:0.2]'),
+                 (self.process / '2.flac', '第三句。')]
+        with patch.object(adapter.worker, 'synthesize_batch', wraps=adapter.worker.synthesize_batch) as batched:
+            self.assertEqual(adapter.convert_batch(items), (True, None))
+            batched.assert_called_once()
+        self.assertEqual([r[0] for r in self.requests], ['第一句。', '第二句。', '第三句。'])
+        for (path, _), duration in zip(items, [.7, .2, .1]):
+            self.assertAlmostEqual(sf.info(path).duration, duration, places=3)
+        self.assertEqual(sorted(p.name for p in self.process.iterdir()), ['0.flac', '1.flac', '2.flac'])
+
+    def test_batch_worker_failure_does_not_publish_sentence_cache(self):
+        adapter = self.adapter('qwen3', tts_batch_size=4)
+        with patch.object(adapter.worker, 'synthesize_batch', side_effect=RuntimeError('GPU out of memory')):
+            success, error = adapter.convert_batch([(self.process / '0.flac', '第一句。'),
+                                                    (self.process / '1.flac', '第二句。')])
+        self.assertFalse(success)
+        self.assertIn('GPU out of memory', error)
+        self.assertEqual(list(self.process.iterdir()), [])
+        self.assertTrue(adapter.worker.closed)
 
     def test_qwen_speaker_is_case_insensitive(self):
         adapter = self.adapter('qwen3', tts_speaker='vivian')

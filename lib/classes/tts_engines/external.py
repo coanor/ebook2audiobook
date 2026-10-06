@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 from lib.classes.tts_engines.common.headers import TTSRegistry, TTSUtils, SML_TAG_PATTERN
-from lib.external_tts import EXTERNAL_ENGINES, QWEN_SPEAKERS, EngineWorker, engine_paths
+from lib.external_tts import EXTERNAL_ENGINES, QWEN_SPEAKERS, EngineWorker, engine_paths, qwen_batch_size
 
 
 class ExternalTTS(TTSUtils):
@@ -92,8 +92,12 @@ class ExternalTTS(TTSUtils):
                     if error:
                         return False, error
                     wav = Path(folder) / 'part.wav'
-                    self.worker.synthesize(part, wav, voice,
-                                           EXTERNAL_ENGINES[self.tts_engine]['languages'][self.language], self.speaker)
+                    generated_parts = kwargs.get('_generated_parts')
+                    if generated_parts is None:
+                        self.worker.synthesize(part, wav, voice,
+                                               EXTERNAL_ENGINES[self.tts_engine]['languages'][self.language], self.speaker)
+                    else:
+                        wav = next(generated_parts)
                     samples, rate = sf.read(wav, dtype='float32', always_2d=True)
                     if not samples.size or not np.isfinite(samples).all():
                         raise ValueError('TTS produced empty or invalid audio.')
@@ -123,7 +127,32 @@ class CosyVoice(ExternalTTS, TTSRegistry, name='cosyvoice'):
 
 
 class Qwen3(ExternalTTS, TTSRegistry, name='qwen3'):
-    pass
+    def convert_batch(self, sentences, **kwargs):
+        """Generate text parts together, then use the usual SML/cache writer per sentence."""
+        try:
+            with tempfile.TemporaryDirectory(dir=self.session['process_dir'], prefix='external-tts-batch-') as folder:
+                requests = []
+                for _, sentence in sentences:
+                    for part in self._split_sentence_on_sml(sentence):
+                        part = part.strip()
+                        if SML_TAG_PATTERN.fullmatch(part) or not any(c.isalnum() for c in part):
+                            continue
+                        requests.append(dict(text=part, output=str(Path(folder) / f'{len(requests)}.wav'),
+                                             language=EXTERNAL_ENGINES['qwen3']['languages'][self.language],
+                                             speaker=self.speaker))
+                # Pause tags can give one sentence multiple text parts. Bound those batches too.
+                size = qwen_batch_size(self.session)
+                for start in range(0, len(requests), size):
+                    self.worker.synthesize_batch(requests[start:start + size])
+                generated = iter(Path(r['output']) for r in requests)
+                for path, sentence in sentences:
+                    success, error = self.convert(path, sentence, _generated_parts=generated, **kwargs)
+                    if not success:
+                        return False, error
+            return True, None
+        except Exception as error:
+            self.close()
+            return False, self.log_exception('qwen3.convert_batch', error)
 
 
 class IndexTTS(ExternalTTS, TTSRegistry, name='indextts'):

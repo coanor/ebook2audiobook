@@ -54,6 +54,26 @@ bash run.sh --ebook "/mnt/d/ai/books/置身事内.epub" --tts=qwen3 --chapter "�
 Nested selections use a separate remembered session from older part samples.
 Existing full-book conversions keep their top-level chapter grouping.
 
+## Qwen3 batching
+
+Qwen3 generates up to four sentences together on CUDA by default, or one on CPU.
+Set `--batch_size` (1–16) to tune it; `1` restores single-sentence generation:
+
+```bash
+env -u CUDA_LAUNCH_BLOCKING bash run.sh --tts=qwen3 \
+  --ebook "/mnt/d/ai/books/置身事内.epub" \
+  --chapter "第四章 工业化中的政府角色" --batch_size 4
+```
+
+Batches stay within each text block. Every sentence keeps its own atomic FLAC
+cache and subtitle entry, including pause tags. Completed chapters still export
+immediately. Changing batch size keeps the same remembered session and cached
+audio; files completed ahead of a saved progress index are reused after interruption.
+The log reports elapsed time, audio duration and RTF per batch: RTF below 1 means
+generation was faster than playback. Performance depends on sentence lengths and
+available GPU memory; if a batch runs out of memory, retry with `--batch_size 2`
+or `1`. Existing running processes use their already loaded code until restarted.
+
 ## Voices
 
 Qwen3 uses the downloaded **1.7B CustomVoice** model and defaults to **Uncle_Fu**,

@@ -121,6 +121,75 @@ class IncrementalChapterTests(unittest.TestCase):
         self.assertIn('Text 9', subtitles)
         self.assertNotIn('Text 1', subtitles)
 
+    def test_qwen_batches_keep_sentence_files_and_export_before_next_chapter(self):
+        self.blocks[0]['sentences'] = [f'First sentence {i}' for i in range(5)]
+        self.session.update(tts_engine='qwen3', device='cuda', tts_batch_size=4)
+        batches = []
+
+        def batch(items, **kwargs):
+            batches.append([sentence for _, sentence in items])
+            if items[0][1] == 'Second heading':
+                self.assertTrue(self.first.exists())
+            for path, _ in items:
+                self.write_audio(path)
+            return True, None
+
+        manager = SimpleNamespace(convert_sentences2audio=batch)
+        with patch.object(core, 'TTSManager', return_value=manager):
+            self.assertTrue(core.convert_chapters2audio('incremental'))
+        self.assertEqual(batches[:2], [[f'First sentence {i}' for i in range(4)], ['First sentence 4']])
+        self.assertEqual(len(list((self.sentences / 'a').glob('*.flac'))), 5)
+        subtitles = self.first.with_suffix('.vtt').read_text()
+        for i in range(5):
+            self.assertIn(f'First sentence {i}', subtitles)
+
+    def test_qwen_resume_reuses_batch_files_ahead_of_checkpoint(self):
+        self.blocks[0]['sentences'] = [f'Sentence {i}' for i in range(5)]
+        self.session.update(tts_engine='qwen3', device='cuda', tts_batch_size=4)
+        self.session['blocks_saved'] = copy.deepcopy(self.session['blocks_current'])
+        for i in range(4):
+            self.write_audio(self.sentences / 'a' / f'{i}.flac')
+        cached_stamp = (self.sentences / 'a' / '0.flac').stat().st_mtime_ns
+        batches = []
+
+        def batch(items, **kwargs):
+            batches.extend(sentence for _, sentence in items)
+            for path, _ in items:
+                self.write_audio(path)
+            return True, None
+
+        with patch.object(core, 'TTSManager', return_value=SimpleNamespace(convert_sentences2audio=batch)):
+            self.assertTrue(core.convert_chapters2audio('incremental'))
+        self.assertEqual(batches[0], 'Sentence 4')
+        self.assertNotIn('Sentence 0', batches)
+        self.assertEqual((self.sentences / 'a' / '0.flac').stat().st_mtime_ns, cached_stamp)
+
+    def test_qwen_interrupted_first_batch_retains_finished_files_on_resume(self):
+        self.blocks[0]['sentences'] = [f'Sentence {i}' for i in range(5)]
+        self.session.update(tts_engine='qwen3', device='cuda', tts_batch_size=4)
+
+        def interrupted(items, **kwargs):
+            for path, _ in items[:2]:
+                self.write_audio(path)
+            return False, 'Interrupted while publishing the batch'
+
+        with patch.object(core, 'TTSManager', return_value=SimpleNamespace(convert_sentences2audio=interrupted)):
+            self.assertFalse(core.convert_chapters2audio('incremental'))
+        self.assertEqual(self.session['blocks_current']['sentence_resume'], 0)
+        generated = []
+
+        def resume(items, **kwargs):
+            generated.extend(sentence for _, sentence in items)
+            for path, _ in items:
+                self.write_audio(path)
+            return True, None
+
+        with patch.object(core, 'TTSManager', return_value=SimpleNamespace(convert_sentences2audio=resume)):
+            self.assertTrue(core.convert_chapters2audio('incremental'))
+        self.assertEqual(generated[:3], ['Sentence 2', 'Sentence 3', 'Sentence 4'])
+        self.assertNotIn('Sentence 0', generated)
+        self.assertNotIn('Sentence 1', generated)
+
     def test_resume_exports_previously_cached_chapter_before_synthesizing_more(self):
         for block in self.blocks[:3]:
             if block['keep']:

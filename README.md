@@ -152,7 +152,7 @@ https://github.com/user-attachments/assets/81c4baad-117e-4db5-ac86-efc2b7fea921
 
 With `--split_by_chapter` (enabled by `run.sh`), each completed book chapter is
 exported immediately, so you can listen while later chapters are still being
-converted. Output names include the book name, chapter number, and chapter title,
+converted. Output names include the book name, TTS engine, chapter number, and chapter title,
 with a matching `.vtt` subtitle file. `bash run.sh --ebook BOOK_FILE` saves these beside
 the source book, or in `OUTPUT_DIR` when set. Rerun the same command after an
 interruption to resume automatically; unchanged completed exports are reused.

@@ -36,9 +36,9 @@ class IncrementalChapterTests(unittest.TestCase):
                             sentences_dir=str(self.sentences), audiobooks_dir=str(self.output),
                             output_split=True, output_split_hours='chapters',
                             output_format='m4b', output_channel='mono', cover=None,
-                            metadata={'title': 'Book', 'creator': 'Author'}, final_name='book.m4b')
-        self.first = self.output / 'book_chapter1_First.m4b'
-        self.second = self.output / 'book_chapter2_Second.m4b'
+                            metadata={'title': 'Book', 'creator': 'Author'}, final_name='book_xtts.m4b', tts_engine='xtts')
+        self.first = self.output / 'book_xtts_chapter1_First.m4b'
+        self.second = self.output / 'book_xtts_chapter2_Second.m4b'
         self.addCleanup(patch.stopall)
         patch.object(core, 'context', SimpleNamespace(get_session=lambda _: self.session)).start()
         for method in ('show_alert', 'save_db_stamp', 'save_json_blocks', 'unload_tts_manager'):
@@ -113,10 +113,10 @@ class IncrementalChapterTests(unittest.TestCase):
         self.session['blocks_orig']['blocks'] = copy.deepcopy(blocks)
         self.complete_block(blocks[0])
         first = core.combine_audio_chapters('incremental', chapter_index=0)
-        self.assertEqual([Path(path).name for path in first], ['book_chapter01_Chapter_1.m4b'])
+        self.assertEqual([Path(path).name for path in first], ['book_xtts_chapter01_Chapter_1.m4b'])
         self.complete_block(blocks[8])
         ninth = core.combine_audio_chapters('incremental', chapter_index=8)
-        self.assertEqual([Path(path).name for path in ninth], ['book_chapter09_Chapter_9.m4b'])
+        self.assertEqual([Path(path).name for path in ninth], ['book_xtts_chapter09_Chapter_9.m4b'])
         subtitles = Path(ninth[0]).with_suffix('.vtt').read_text()
         self.assertIn('Text 9', subtitles)
         self.assertNotIn('Text 1', subtitles)
@@ -153,6 +153,25 @@ class IncrementalChapterTests(unittest.TestCase):
         for block in self.blocks:
             block.pop('book_chapter')
             block['expand'] = True
+        with patch.object(core, 'assemble_audio_chunks') as assemble:
+            self.assertEqual(core.combine_audio_chapters('incremental', chapter_index=0), [str(self.first)])
+            assemble.assert_not_called()
+
+    def test_adding_engine_name_reexports_cached_audio_and_keeps_old_output(self):
+        for block in self.blocks[:3]:
+            if block['keep']:
+                self.complete_block(block)
+        self.session['final_name'] = 'book.m4b'
+        old = self.output / 'book_chapter1_First.m4b'
+        self.assertEqual(core.combine_audio_chapters('incremental', chapter_index=0), [str(old)])
+        old_data = old.read_bytes()
+        source = self.chapters / 'a.flac'
+        source_stamp = source.stat().st_mtime_ns
+        self.session['final_name'] = 'book_xtts.m4b'
+        self.assertEqual(core.combine_audio_chapters('incremental', chapter_index=0), [str(self.first)])
+        self.assertEqual(old.read_bytes(), old_data)
+        self.assertEqual(source.stat().st_mtime_ns, source_stamp)
+        self.assertTrue(self.first.with_suffix('.vtt').is_file())
         with patch.object(core, 'assemble_audio_chunks') as assemble:
             self.assertEqual(core.combine_audio_chapters('incremental', chapter_index=0), [str(self.first)])
             assemble.assert_not_called()

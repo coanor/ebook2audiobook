@@ -3858,12 +3858,13 @@ def convert_ebook(args:dict)->tuple:
             session['chapters_dir'] = os.path.join(session['process_dir'], 'chapters')
             session['sentences_dir'] = os.path.join(session['chapters_dir'], 'sentences')
             cleanup_models_cache()
+            output_basename = f"{ebook_name}{lang_prfx}_{session['tts_engine']}.{session['output_format']}"
             if session['is_gui_process']:
-                session['final_name'] = ebook_name + lang_prfx + '.' + session['output_format']
+                session['final_name'] = output_basename
             else:
                 session['system'] = DEVICE_SYSTEM
                 session['audiobooks_dir'] = os.path.abspath(args['output_dir']) if args.get('output_dir') is not None else os.path.join(audiobooks_cli_dir, f'cli-{session_id}')
-                session['final_name'] = os.path.join(session['audiobooks_dir'], ebook_name + lang_prfx + '.' + session['output_format'])
+                session['final_name'] = os.path.join(session['audiobooks_dir'], output_basename)
                 session['voice_dir'] = os.path.join(voices_dir, '__sessions', f'voice-{session_id}', final_language)
                 session['abs_url'] = str(args.get('abs_url', ''))
                 session['abs_api_token'] = str(args.get('abs_api_token', ''))

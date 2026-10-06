@@ -30,7 +30,14 @@ automatic remembered resume apply to `--ebook`; raw text uses the existing
 text-conversion flow.
 
 Each engine exports completed book chapters beside the book, using the existing
-chapter filename rules. Rerunning the same command resumes automatically.
+chapter filename rules. Audio and subtitle filenames include the engine selected
+with `--tts`, for example `置身事内_qwen3_chapter1_上篇_微观机制.m4b` and its
+matching `.vtt`. Raw-text names use the text prefix and session ID followed by
+the engine: `五千年的文明。_<session-id>_cosyvoice_chapter1_<title>.m4b`.
+Chapter samples retain `_sample` before the engine name. Rerunning the same
+command resumes automatically. Sentence cache paths are unchanged; older cached
+audio can be exported again with the new names while existing output files stay
+in place. Conversions already running keep their earlier names until restarted.
 `--chapter "序言"` or `--chapter 3` converts a single chapter in a separate
 sample session. `--output_format wav` changes the default M4B format.
 

@@ -272,13 +272,13 @@ class ChapterExportTests(unittest.TestCase):
                            process_dir=str(root), chapters_dir=str(chapters), sentences_dir=str(sentences),
                            audiobooks_dir=str(output), output_split=True, output_split_hours='chapters',
                            output_format='wav', output_channel='mono', cover=None,
-                           metadata={'title': 'Book', 'creator': 'Author'}, final_name='book_sample.wav',
+                           metadata={'title': 'Book', 'creator': 'Author'}, final_name='book_sample_qwen3.wav',
                            chapter_selection={'number': 7, 'key': 'selected', 'title': '第六章'})
-            full_output = output / 'book_chapter7_第六章.wav'
+            full_output = output / 'book_qwen3_chapter7_第六章.wav'
             full_output.write_bytes(b'previous full-book output')
             with patch.object(core, 'context', SimpleNamespace(get_session=lambda _: session)):
                 files = core.combine_audio_chapters('sample-test')
-            self.assertEqual([Path(file).name for file in files], ['book_sample_chapter7_第六章.wav'])
+            self.assertEqual([Path(file).name for file in files], ['book_sample_qwen3_chapter7_第六章.wav'])
             self.assertAlmostEqual(sf.info(files[0]).duration, 1.0, places=2)
             self.assertEqual(full_output.read_bytes(), b'previous full-book output')
             subtitles = Path(files[0]).with_suffix('.vtt').read_text()
@@ -311,12 +311,12 @@ class ChapterExportTests(unittest.TestCase):
                            process_dir=str(root), chapters_dir=str(chapters), sentences_dir=str(sentences),
                            audiobooks_dir=str(output), output_split=True, output_split_hours='chapters',
                            output_format='wav', output_channel='mono', cover=None,
-                           metadata={'title': 'Book', 'creator': 'Author'}, final_name='book.wav')
+                           metadata={'title': 'Book', 'creator': 'Author'}, final_name='book_qwen3.wav')
             with patch.object(core, 'context', SimpleNamespace(get_session=lambda _: session)):
                 files = core.combine_audio_chapters('export-test')
             self.assertIsNotNone(files)
             self.assertEqual([Path(file).name for file in files],
-                             ['book_chapter1_第一章.wav', 'book_chapter2_第二章.wav'])
+                             ['book_qwen3_chapter1_第一章.wav', 'book_qwen3_chapter2_第二章.wav'])
             self.assertAlmostEqual(sf.info(files[0]).duration, 1.0, places=2)
             self.assertAlmostEqual(sf.info(files[1]).duration, 0.5, places=2)
             first_vtt = Path(files[0]).with_suffix('.vtt').read_text()

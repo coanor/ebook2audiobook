@@ -47,6 +47,20 @@ def load_model(engine, cls, model_dir, device):
                use_deepspeed=False, use_accel=False, use_qwen_emo=False)
 
 
+def cosyvoice_reference(model, voice):
+    """Keep one prepared reference in this worker; replace it when the recording changes."""
+    reference = Path(voice).resolve()
+    stat = reference.stat()
+    signature = (str(reference), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    speaker_id = '__txt2voice_reference'
+    if getattr(model, '_txt2voice_reference_signature', None) != signature:
+        # Cross-lingual synthesis does not need a reference transcript. The native
+        # speaker cache retains speech features/tokens and the speaker embedding.
+        model.add_zero_shot_spk('', str(reference), speaker_id)
+        model._txt2voice_reference_signature = signature
+    return speaker_id
+
+
 def synthesize(engine, model, request):
     import numpy as np
     import soundfile as sf
@@ -59,8 +73,10 @@ def synthesize(engine, model, request):
         sf.write(output, wavs[0], rate, subtype='FLOAT')
     elif engine == 'cosyvoice':
         import torch
+        speaker_id = cosyvoice_reference(model, request['voice'])
         chunks = [item['tts_speech'].detach().cpu() for item in model.inference_cross_lingual(
-            'You are a helpful assistant.<|endofprompt|>' + request['text'], request['voice'], stream=False)]
+            'You are a helpful assistant.<|endofprompt|>' + request['text'], request['voice'],
+            zero_shot_spk_id=speaker_id, stream=False)]
         if not chunks:
             raise RuntimeError('CosyVoice returned no audio.')
         rate = model.sample_rate

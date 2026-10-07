@@ -98,7 +98,11 @@ bash run.sh --ebook "/path/book.epub" --tts=indextts --voice "/path/reference.wa
 Without `--voice`, both use CosyVoice's bundled Chinese example recording at
 `components/external-tts/CosyVoice/asset/zero_shot_prompt.wav`.
 CosyVoice uses cross-lingual cloning, which does not require a transcript of
-the recording. IndexTTS uses the 2.5 multilingual inference implementation.
+the recording. Its worker prepares reference-audio features once and reuses them
+for subsequent sentences. Selecting another reference, or modifying the current
+recording, refreshes that cache. Only one prepared reference is retained per worker;
+the sentence cache and resume behavior remain unchanged. Running processes use
+the optimization after a restart. IndexTTS uses the 2.5 multilingual inference implementation.
 
 ## Environments and model locations
 

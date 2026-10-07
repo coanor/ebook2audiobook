@@ -53,6 +53,41 @@ class WorkerProtocolTests(unittest.TestCase):
 
 
 class ModelOutputTests(unittest.TestCase):
+    def test_cosyvoice_reuses_reference_features_and_refreshes_changed_recording(self):
+        import numpy as np
+        import torch
+        from lib.external_tts_worker import synthesize
+        from unittest.mock import Mock
+
+        class FakeCosyVoice:
+            sample_rate = 24000
+
+            def __init__(self):
+                self.add_zero_shot_spk = Mock(return_value=True)
+                self.inference_cross_lingual = Mock(side_effect=lambda *args, **kwargs: iter([
+                    {'tts_speech': torch.from_numpy(np.ones((1, 100), dtype='float32') * .1)}]))
+
+        model = FakeCosyVoice()
+        with tempfile.TemporaryDirectory() as folder:
+            voice = Path(folder) / 'reference.wav'
+            voice.write_bytes(b'reference')
+            request = dict(text='测试。', voice=str(voice), output=str(Path(folder) / 'sentence.wav'))
+            for _ in range(2):
+                self.assertEqual(synthesize('cosyvoice', model, request), 24000)
+            model.add_zero_shot_spk.assert_called_once()
+            speaker_id = model.add_zero_shot_spk.call_args.args[2]
+            self.assertTrue(speaker_id)
+            for call in model.inference_cross_lingual.call_args_list:
+                self.assertEqual(call.kwargs['zero_shot_spk_id'], speaker_id)
+            voice.write_bytes(b'updated reference')
+            synthesize('cosyvoice', model, request)
+            self.assertEqual(model.add_zero_shot_spk.call_count, 2)
+            other = Path(folder) / 'other.wav'
+            other.write_bytes(b'other voice')
+            request['voice'] = str(other)
+            synthesize('cosyvoice', model, request)
+            self.assertEqual(model.add_zero_shot_spk.call_count, 3)
+
     def test_qwen_model_receives_lists_and_writes_distinct_sentence_audio(self):
         import numpy as np
         import soundfile as sf
